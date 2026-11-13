@@ -103,6 +103,11 @@ on the machine doing the capture.
 
 ## Troubleshooting
 
+- **A push does not start a build** — the Workers Builds project must have
+  `vllogic/Logic20Web` as its Git repository, `main` as its production branch and
+  automatic deployments enabled. The Cloudflare GitHub App also needs repository
+  access under `https://github.com/settings/installations`. If the project was
+  created by a direct `wrangler deploy`, it has no Git trigger at all.
 - **`npm run build` cannot find `tsc`/`vite`** — the prebuild hook installs
   dependencies when `node_modules` is missing; if the log shows `npm ci` failing,
   check the build environment's npm registry access.
