@@ -19,7 +19,8 @@ import {
 import { DiagnosticError, diagnosticOf } from '../diagnostics.js';
 import {
   MAX_SAMPLERATE_HZ, SAMPLERATES_HZ, TransportDeadError, getGrantedDevicesOnBestThread,
-  requestDeviceOnBestThread, vrefCode, type CaptureConfig, type Device,
+  requestDeviceOnBestThread, vrefCode, type CaptureConfig, type CaptureStartOptions,
+  type Device,
 } from '../device/index.js';
 import { WorkerSlogicDevice, workerTransport } from '../device/workerTransport.js';
 import { wheelSpanFactor } from '../render/index.js';
@@ -4997,6 +4998,8 @@ export class App {
       rateChange: this.rateChange,
       savePercent: this.savePercent,
       analogGroups: this.analogGroups(),
+      loopSupported: this.device?.sampleLayout !== 'channel-major',
+      triggerSupported: this.device?.sampleLayout !== 'channel-major',
       deviceName: this.device?.name ?? null,
       developerTools: this.developerTools,
       running: this.running,
@@ -5015,6 +5018,7 @@ export class App {
         : null,
       progress: this.running ? this.progressView() : null,
       maxSamplerateHz: this.rateCeilings,
+      sampleratesHz: this.device?.sampleratesHz,
       recommendedSamplerateHz: this.rateRecommendations,
       triggerState: this.triggerState,
       cursors: this.cursorRows(),
@@ -5962,7 +5966,8 @@ export class App {
    * a capture that survives a 30 ms garbage collection at 800 MB/s and one that does not.
    */
   private noteTransport(): void {
-    if (!(this.device instanceof WorkerSlogicDevice) && workerTransport.lastFallbackReason) {
+    if (!(this.device instanceof WorkerSlogicDevice) &&
+        this.device?.sampleLayout !== 'channel-major' && workerTransport.lastFallbackReason) {
       console.warn(
         '[slogic] capturing on the page thread: the worker transport could not open the ' +
         `device (${workerTransport.lastFallbackReason})`,
@@ -5997,7 +6002,9 @@ export class App {
       // the channel rows; otherwise row 16 of a newly-connected 32U3 is queried against
       // the initial 16-channel placeholder and WaveformRenderer rejects it as out of range.
       this.releaseMarkerPointer();
-      this.storeRef.set(createSampleStore(max, samplerate));
+      this.storeRef.set(createSampleStore(
+        max, samplerate, device.sampleLayout === 'channel-major' ? 'planar' : undefined,
+      ));
       this.waveStore = this.storeRef.target;
     }
     if (this.store.length === 0 && max !== this.channels.length) {
@@ -6042,13 +6049,32 @@ export class App {
         thresholdVolts: this.settings.thresholdVolts,
         testMode: this.settings.testMode,
       };
-      // The device layer maps volts to a DAC code; check it lands somewhere sane before
-      // the capture rather than discovering a clipped threshold in the data.
-      const code = vrefCode(cfg.thresholdVolts);
-      if (code === 0 || code === 1023) {
-        throw new DiagnosticError('device.thresholdClips', { volts: cfg.thresholdVolts, code });
+      // A channel-major device has a fixed rate table (divider values); snap a stored
+      // rate that predates the connection to the fastest supported entry at or below it.
+      if (device.sampleLayout === 'channel-major' && device.sampleratesHz?.length) {
+        const rates = device.sampleratesHz;
+        if (!rates.includes(cfg.samplerate)) {
+          const below = rates.filter((rate) => rate <= cfg.samplerate);
+          cfg.samplerate = below.length > 0 ? below[below.length - 1]! : rates[0]!;
+        }
       }
-      const mode = this.settings.mode;
+      // The U3 layer maps volts to a DAC code; check it lands somewhere sane before the
+      // capture rather than discovering a clipped threshold in the data. A device with
+      // its own comparator (VLLogic) declares the voltage interval instead.
+      if (device.thresholdRange) {
+        if (cfg.thresholdVolts < device.thresholdRange.min ||
+            cfg.thresholdVolts > device.thresholdRange.max) {
+          throw new DiagnosticError('device.threshold', { volts: cfg.thresholdVolts });
+        }
+      } else {
+        const code = vrefCode(cfg.thresholdVolts);
+        if (code === 0 || code === 1023) {
+          throw new DiagnosticError('device.thresholdClips', { volts: cfg.thresholdVolts, code });
+        }
+      }
+      // VLLogic has no loop transport yet; the profile also marks it unavailable.
+      const mode = device.sampleLayout === 'channel-major' && this.settings.mode === 'loop'
+        ? 'single' : this.settings.mode;
       const isLoop = mode === 'loop';
       // A Repeat session owns one Capture→Stop period: the first (manual) start renders
       // the panel once, and the interval waves that follow keep the same layout, panel and
@@ -6068,7 +6094,11 @@ export class App {
       this.lastCaptureRate = cfg.samplerate;
       this.lastCaptureTestMode = cfg.testMode ?? 0;
       this.repeatWaveHolding = quietRepeat;
-      const store = createSampleStore(cfg.channels, cfg.samplerate);
+      const store = createSampleStore(
+        cfg.channels,
+        cfg.samplerate,
+        device.sampleLayout === 'channel-major' ? 'planar' : undefined,
+      );
       this.waveStore = store;
       this.discardDecodeState();
       this.releaseMarkerPointer();
@@ -6104,7 +6134,8 @@ export class App {
       const plan = this.triggerPlan(this.settings);
       const analogTriggers = plan.analog.filter((trigger) =>
         trigger.start + CHANNEL_BANK_SIZE <= cfg.channels);
-      const softwareTrigger = this.settings.triggerEnableMask &&
+      const softwareTrigger = device.sampleLayout !== 'channel-major' &&
+        this.settings.triggerEnableMask &&
         (plan.digital.length > 0 || analogTriggers.length > 0);
       this.captureUsesSoftwareTrigger = softwareTrigger;
       // Loop + trigger freezes the viewport on T. The pre-trigger percentage is then the
@@ -6260,7 +6291,7 @@ export class App {
       this.loopSinkMsAvg = 0;
       let lastLoopSinkMs = 0;
       this.captureArming = true;
-      await device.start(cfg, (chunk) => {
+      const interleavedSink = (chunk: Uint8Array) => {
         // A late message from a superseded acquisition must never touch the new store.
         if (generation !== this.captureGeneration) return;
         // Chunks arriving while `stopping` are the drained tail of this capture - the
@@ -6387,7 +6418,8 @@ export class App {
         this.captureBytes += Math.min(room, chunk.length);
         this.livePending = true;
         if (store.length >= this.captureLimitSamples) this.captureFilled();
-      }, (pos, missing) => {
+      };
+      const dropoutSink = (pos: number, missing: number) => {
         if (generation !== this.captureGeneration) return;
         // A transfer the device could not fill. Append filler for the lost samples so
         // store time keeps tracking device time, then mark that span untrusted.
@@ -6445,7 +6477,8 @@ export class App {
         // A crossing across the gap is unknowable; restart the scan from the next chunk.
         this.analogScanner?.resetContinuity();
         if (store.length >= this.captureLimitSamples) this.captureFilled();
-      }, softwareTrigger ? {
+      };
+      const startOptions: CaptureStartOptions = softwareTrigger ? {
         // A loop capture windows the triggered stream downstream of the trigger: the
         // trigger's budget is unbounded (maxSamples Infinity), the store drops the
         // front, and the trigger marker shifts with each drop until it falls off.
@@ -6576,7 +6609,30 @@ export class App {
           if (generation !== this.captureGeneration) return;
           if (this.running) this.captureFilled();
         },
-      });
+      };
+      if (device.startChannelMajor) {
+        // Channel-major device: write each channel's words straight into its plane and
+        // publish the snapshot only after every channel has arrived. The interleaved
+        // sink above is never used for this transport.
+        const channelStore = store as typeof store & {
+          beginFrame?: (channels: readonly number[]) => void;
+          appendChannel?: (channel: number, startSample: number, words: Uint32Array) => void;
+          commitSamples?: (samples: number) => void;
+        };
+        await device.startChannelMajor(cfg, {
+          begin: (channels) => channelStore.beginFrame?.(channels),
+          channel: (channel, startSample, words) => {
+            channelStore.appendChannel?.(channel, startSample, words);
+          },
+          commit: (samples) => {
+            channelStore.commitSamples?.(samples);
+            this.captureBytes += samples * bytesPerSampleForChannels(cfg.channels);
+            this.livePending = true;
+          },
+        }, undefined, startOptions);
+      } else {
+        await device.start(cfg, interleavedSink, dropoutSink, startOptions);
+      }
       this.captureArming = false;
       // start() resolves once the read loop is armed: the matcher observes the stream from
       // about here, so the pre-fill holdoff readout counts from now.

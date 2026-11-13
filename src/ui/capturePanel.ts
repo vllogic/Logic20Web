@@ -141,6 +141,10 @@ export interface CapturePanelView {
   analogLevelClamped?: { start: number; from: number; to: number } | null;
   /** Analog groups (A0–A3) the current device and width expose; 0 disables the buttons. */
   analogGroups: number;
+  /** False for a transport with no loop path (the channel-major VLLogic device). */
+  loopSupported?: boolean;
+  /** False when the transport cannot honour a host-side trigger. */
+  triggerSupported?: boolean;
   deviceName: string | null;
   /** Settings > Developer tools: shows the raw USB register console. Absent = off. */
   developerTools?: boolean;
@@ -173,6 +177,8 @@ export interface CapturePanelView {
   /** A streamed save's progress, 0..100; null when no big save is running. */
   savePercent?: number | null;
   maxSamplerateHz: Readonly<Record<number, number>>;
+  /** Device-specific rate table; absent means the SLogic U3 SAMPLERATES_HZ. */
+  sampleratesHz?: readonly number[] | undefined;
   /** Per-width rate the board sustains below that ceiling (`Device.recommendedSamplerateHz`). */
   recommendedSamplerateHz?: Readonly<Record<number, number>>;
   triggerState: TriggerNoteState;
@@ -778,7 +784,7 @@ export class CapturePanel {
     // ---- rate + threshold
     const rowRT = div('field-row');
     const ceiling = v.maxSamplerateHz[s.channels] ?? 200e6;
-    const supported = SAMPLERATES_HZ.filter((r) => r <= ceiling);
+    const supported = (v.sampleratesHz ?? SAMPLERATES_HZ).filter((r) => r <= ceiling);
     // The ADC module's sample clock must come from its 800 MHz PLL (HSync adc.rs), so an
     // active analog group narrows the list to that PLL's divisors from 100 MHz up.
     const analogRates = activeBanks.size > 0 ? analogSamplerates(supported) : [];
@@ -890,7 +896,7 @@ export class CapturePanel {
       b.dataset.captureMode = id;
       b.title = t(id === 'single' ? 'capturePanel.modeSingleTip'
         : id === 'repeat' ? 'capturePanel.modeRepeatTip' : 'capturePanel.modeLoopTip');
-      b.disabled = modeLocked;
+      b.disabled = modeLocked || (id === 'loop' && v.loopSupported === false);
       b.addEventListener('click', () => this.cb.onSettings({ ...s, mode: id }));
       seg.appendChild(b);
     }
@@ -1049,6 +1055,7 @@ export class CapturePanel {
     modeSec.body.appendChild(limit);
 
     const triggerSec = section(t('capturePanel.softwareTrigger'));
+    triggerSec.el.hidden = v.triggerSupported === false;
     const mask = document.createElement('input');
     mask.type = 'checkbox'; mask.checked = s.triggerEnableMask;
     // Trigger edits are live while the matcher waits and pending after it matches; only

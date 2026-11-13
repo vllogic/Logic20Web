@@ -1,10 +1,10 @@
 # SLogicWeb
 
-A browser logic analyzer and mixed-signal viewer for Sipeed SLogic16 U3 and SLogic32 U3:
-digital channels, the SLogic32 U3's ADC module as analog rows, and sigrok protocol
-decoders on one timeline. It talks to the board over WebUSB, so there is nothing to
-install: open the page in a Chromium-based browser, connect the board and capture.
-Everything runs locally; there are no accounts and no cloud.
+A browser logic analyzer and mixed-signal viewer for Sipeed SLogic16 U3, SLogic32 U3 and
+the VLLogic Logic20: digital channels, the SLogic32 U3's ADC module as analog rows, and
+sigrok protocol decoders on one timeline. It talks to the board over WebUSB, so there is
+nothing to install: open the page in a Chromium-based browser, connect the board and
+capture. Everything runs locally; there are no accounts and no cloud.
 
 - Hosted: https://slogic.sipeed.com
 - Source: https://github.com/sipeed/slogicweb
@@ -13,6 +13,9 @@ Everything runs locally; there are no accounts and no cloud.
 
 - Single, Repeat and Loop capture with digital and qualified analog triggers, pre-trigger
   and a conservative, link-aware default rate.
+- VLLogic Logic20 support: 20 lanes over UHSIF v2.2. Its channel-major payload is written
+  straight into the per-channel bit planes, with no interleaved transpose in the capture
+  path (`docs/PROTOCOL-VLLOGIC-LOGIC20.md`).
 - Analog rows from the ADC module with a declared gain, V/div, autoset and a graticule
   that follows the row height.
 - 130+ sigrok decoders (Pyodide), a searchable results list and CSV/TXT export.

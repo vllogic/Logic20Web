@@ -831,7 +831,7 @@ expectHeight('annotation lanes cannot push a channel below the minimum', 200, 32
     `slice=${startSrc.length}, reset=${flagReset}, refusal=${firstRefusal}, set=${flagSet}`);
 
   const directMode = panel.includes('capturePostTriggerSamples(s)') && !panel.includes('s.channels === 32') &&
-    startSrc.includes('const mode = this.settings.mode;') &&
+    startSrc.includes("device.sampleLayout === 'channel-major' && this.settings.mode === 'loop'") &&
     startSrc.includes("const isLoop = mode === 'loop'") &&
     startSrc.includes('const postTriggerSamples = capturePostTriggerSamples(this.settings)') &&
     startSrc.includes('this.captureLimitSamples = isLoop ? MAX_SAMPLES - 1 : postTriggerSamples;') &&

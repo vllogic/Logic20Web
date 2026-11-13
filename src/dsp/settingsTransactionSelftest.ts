@@ -82,6 +82,8 @@ function digitalCeiling(channels: ChannelCount): number {
       return 400e6;
     case 16:
       return 200e6;
+    case 20:
+      return 160e6;
     case 32:
       return 200e6;
     case 64:

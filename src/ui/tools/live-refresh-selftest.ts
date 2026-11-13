@@ -149,13 +149,15 @@ function check(name: string, pass: boolean, detail: string): void {
   check('the 50 ms policy ceiling is gone from the gate and its caller',
     ceilingGone, `app=${!app.includes('LIVE_REFRESH_MS')}, policy=${!policy.includes('LIVE_REFRESH_MS')}, literal50=${!/\b50\b/.test(policy)}`);
 
-  const sinkStart = app.indexOf('await device.start(cfg, (chunk) => {');
-  const sinkEnd = sinkStart >= 0 ? app.indexOf('}, (pos, missing) => {', sinkStart) : -1;
+  const sinkStart = app.indexOf('const interleavedSink = (chunk: Uint8Array) => {');
+  const sinkEnd = sinkStart >= 0
+    ? app.indexOf('const dropoutSink = (pos: number, missing: number) => {', sinkStart) : -1;
   const sink = sinkEnd > sinkStart ? app.slice(sinkStart, sinkEnd) : '';
   const appended = (sink.match(/this\.livePending = true;/g) ?? []).length >= 2 &&
     !sink.includes('this.dirty = true;');
   // The dropout handler ends where the start options begin; its size is not fixed.
-  const dropEnd = sinkEnd >= 0 ? app.indexOf('softwareTrigger ? {', sinkEnd) : -1;
+  const dropEnd = sinkEnd >= 0
+    ? app.indexOf('const startOptions: CaptureStartOptions = softwareTrigger ? {', sinkEnd) : -1;
   const drop = dropEnd > sinkEnd ? app.slice(sinkEnd, dropEnd) : '';
   const dropout = drop.includes('this.livePending = true;') &&
     drop.includes('this.analogScanner?.resetContinuity();') &&

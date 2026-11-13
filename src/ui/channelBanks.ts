@@ -301,7 +301,11 @@ export function analogBusConfig(
 
 export function channelWidthOptions(channelCount: number): number[] {
   const max = Math.max(0, Math.floor(channelCount));
-  return CHANNEL_WIDTH_OPTIONS.filter((n) => n <= max);
+  const options: number[] = CHANNEL_WIDTH_OPTIONS.filter((n) => n <= max);
+  // The Logic20's 20-lane native width is not one of the U3 tiers. Add it only for
+  // that exact width; an arbitrary model width must not invent a selectable tier.
+  if (max === 20) options.push(20);
+  return options.sort((a, b) => a - b);
 }
 
 export function captureWidthTiers(deviceChannels: number | null): number[] {

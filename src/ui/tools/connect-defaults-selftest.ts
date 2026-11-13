@@ -147,7 +147,8 @@ const decisionFields = [
   'recommended: this.rateRecommendations,',
 ].filter((needle) => decisionBlock.includes(needle));
 const clampTakesDecision = clampBlock.includes('channels: width, samplerate');
-const storeTakesDecision = adoptBody.includes('createSampleStore(max, samplerate)');
+const storeTakesDecision = adoptBody.includes('createSampleStore(') &&
+  adoptBody.includes('max, samplerate');
 const persists = adoptBody.includes('this.persistWorkspace();');
 const adoptsAdvice = adoptBody.includes('this.rateRecommendations = device.recommendedSamplerateHz ?? {};');
 const decisionBeforeClamp = decisionAt !== -1 && clampAt !== -1 && decisionAt < clampAt;

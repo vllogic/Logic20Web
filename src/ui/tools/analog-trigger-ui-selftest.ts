@@ -260,7 +260,8 @@ function cssRules(selector: string): string[] {
 
 {
   const disabled = panel.includes('triggerSec.body.hidden = !s.triggerEnableMask') &&
-    app.includes('const softwareTrigger = this.settings.triggerEnableMask &&') &&
+    app.includes("device.sampleLayout !== 'channel-major'") &&
+    app.includes('this.settings.triggerEnableMask &&') &&
     channel.includes("(cell.triggerActive === true ? ' armed' : ' configured')") &&
     channel.includes("cell.trigger.armed ? ' armed' : ' configured'");
   check('disabling Global trigger hides its panel and leaves every condition neutral',
