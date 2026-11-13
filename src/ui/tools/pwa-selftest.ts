@@ -243,11 +243,25 @@ try {
 
   const catalogs = { en, zhCN, fr, ru };
   const missing = Object.entries(catalogs).flatMap(([name, c]) =>
-    (['update.ready', 'update.reload', 'update.later'] as const).filter((k) => !c[k]).map((k) => `${name}:${k}`));
-  check('update notice: localized in four locales',
+    (['update.ready', 'update.reload', 'update.later',
+      'toolbar.update', 'toolbar.updateIdle', 'toolbar.updateReady', 'toolbar.shortUpdate',
+    ] as const).filter((k) => !c[k]).map((k) => `${name}:${k}`));
+  check('update notice and toolbar command: localized in four locales',
     missing.length === 0 && zhCN['update.ready'] === '发现新版本，升级后生效。' &&
-      zhCN['update.reload'] === '升级',
+      zhCN['update.reload'] === '升级' && zhCN['toolbar.updateReady'] === '发现新版本，点击升级',
     missing.join(', ') || en['update.ready']);
+
+  const updateMarkup = /<button id="btn-update"[\s\S]*?<\/button>/.exec(html)?.[0] ?? '';
+  const updateWiringSource = fs.readFileSync('src/ui/pwaUpdate.ts', 'utf8');
+  check('the toolbar update command starts grey and inert, then swaps to applyUpdate on ready',
+    updateMarkup.includes('aria-disabled="true"') &&
+      updateMarkup.includes('data-i18n-title="toolbar.updateIdle"') &&
+      updateMarkup.includes('data-i18n-aria-label="toolbar.update"') &&
+      updateWiringSource.includes("document.getElementById('btn-update')") &&
+      updateWiringSource.includes("button.classList.toggle('ready', ready)") &&
+      updateWiringSource.includes("if (state === 'ready') applyUpdate();"),
+    `markup=${updateMarkup.length > 0}, grey=${updateMarkup.includes('aria-disabled="true"')}, ` +
+    `wire=${updateWiringSource.includes("document.getElementById('btn-update')")}`);
 }
 
 // ---------------------------------------------------------------------- report

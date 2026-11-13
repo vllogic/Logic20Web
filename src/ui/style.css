@@ -330,6 +330,34 @@ html[data-theme="dark"] #toolbar .toolbar-theme:not([data-mode]) .theme-icon-dar
 #toolbar .toolbar-fullscreen[aria-pressed="true"] .fullscreen-icon-exit { display: block; }
 #toolbar .toolbar-fullscreen[aria-pressed="true"] .toolbar-item-media { color: var(--primary); }
 
+/* The update command: a browser window with an upward arrow, so it reads as "this page
+   has a new version" rather than a device action. It is grey and inert while the shell
+   is current (aria-disabled keeps the tooltip working, which a native disabled button
+   would swallow). Once the waiting worker has precached a new shell, .ready turns the
+   icon brand-coloured and a ring converges inward on it until the user clicks. */
+#toolbar .toolbar-update .toolbar-item-media { position: relative; }
+#toolbar .toolbar-update[aria-disabled="true"] { cursor: default; opacity: 0.55; }
+#toolbar .toolbar-update[aria-disabled="true"]:hover {
+  background: transparent; border-color: transparent;
+}
+#toolbar .toolbar-update[aria-disabled="true"]:active { box-shadow: none; }
+#toolbar .toolbar-update.ready .toolbar-item-media {
+  background: var(--primary); color: var(--primary-foreground);
+}
+#toolbar .toolbar-update.ready .toolbar-item-media::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  border: 1px solid var(--primary);
+  pointer-events: none;
+  /* `--motion-fast` * 15 is 1.8 s normally and ~15 ms under reduced motion, so the
+     ring behaves like the rest of the sheet with no second media block. */
+  animation: toolbar-update-converge calc(var(--motion-fast) * 15) var(--motion-ease) infinite;
+}
+@keyframes toolbar-update-converge {
+  0% { transform: scale(1.6); opacity: 0; }
+  30% { opacity: 0.85; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
 @media (max-width: 760px) {
   #toolbar { gap: 4px; padding: 6px; }
   #toolbar .toolbar-group { gap: 4px; }

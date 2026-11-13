@@ -73,6 +73,9 @@ const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
 const media = mediaRanges(code);
 const rules = flatRules(code);
 
+/** The toolbar update ring: a product-mandated "a version is ready" pulse. */
+const UPDATE_PULSE_RULE = '#toolbar .toolbar-update.ready .toolbar-item-media::after';
+
 const MOTION_CONSUMERS: readonly string[] = [
   '.tooltip',
   '.tooltip.open',
@@ -107,6 +110,7 @@ const MOTION_CONSUMERS: readonly string[] = [
   '.settings-dialog',
   '.settings-dialog::backdrop',
   '.settings-dialog-close',
+  UPDATE_PULSE_RULE,
 ];
 
 const ENTRY_RULES: readonly string[] = [
@@ -207,27 +211,35 @@ const NON_BUTTON_CONSUMERS: readonly string[] = [
   const names = [...code.matchAll(/@(?:-webkit-)?keyframes\s+([\w-]+)/g)].map((m) => m[1] ?? '').sort();
   const fadeBody = code.includes('@keyframes motion-fade {\n  from { opacity: 0; }\n}');
   const popBody = code.includes('@keyframes motion-pop {\n  from { opacity: 0; transform: scale(0.98); }\n}');
+  const convergeBody = code.includes('@keyframes toolbar-update-converge {\n' +
+    '  0% { transform: scale(1.6); opacity: 0; }\n' +
+    '  30% { opacity: 0.85; }\n' +
+    '  100% { transform: scale(1); opacity: 0; }\n' +
+    '}');
   const outsideMedia = [...code.matchAll(/@(?:-webkit-)?keyframes/g)].every(
     (m) => !media.some((range) => (m.index ?? -1) > range.start && (m.index ?? -1) < range.end),
   );
-  check('exactly the two pinned keyframes with their exact bodies, outside every media block',
-    names.length === 2 && names[0] === 'motion-fade' && names[1] === 'motion-pop' && fadeBody && popBody && outsideMedia,
-    `names=${JSON.stringify(names)}, fadeBody=${fadeBody}, popBody=${popBody}, outsideMedia=${outsideMedia}`);
+  check('exactly the three pinned keyframes with their exact bodies, outside every media block',
+    names.length === 3 && names[0] === 'motion-fade' && names[1] === 'motion-pop' &&
+      names[2] === 'toolbar-update-converge' && fadeBody && popBody && convergeBody && outsideMedia,
+    `names=${JSON.stringify(names)}, fadeBody=${fadeBody}, popBody=${popBody}, convergeBody=${convergeBody}, outsideMedia=${outsideMedia}`);
 }
 
 {
   const animRules = rules.filter((r) => /(^|;)\s*(-webkit-)?animation(-[\w]+)?\s*:/.test(r.body)).map((r) => r.selector).sort();
-  const want = [...ENTRY_RULES].sort();
+  const want = [...ENTRY_RULES, UPDATE_PULSE_RULE].sort();
   const listOk = animRules.length === want.length && animRules.every((s, i) => s === want[i]);
   const bySelector = new Map(rules
     .filter((r) => !media.some((range) => r.start > range.start && r.start < range.end))
     .map((r) => [r.selector, r.body]));
   const timed = ENTRY_RULES.every((s) =>
     /animation:\s*motion-(fade|pop) var\(--motion-fast\) var\(--motion-ease\);/.test(bySelector.get(s) ?? ''));
+  const pulseTimed = /animation:\s*toolbar-update-converge calc\(var\(--motion-fast\) \* 15\) var\(--motion-ease\) infinite;/
+    .test(bySelector.get(UPDATE_PULSE_RULE) ?? '');
   const forbidden = ['animation-fill-mode', '@starting-style', 'allow-discrete'].filter((s) => code.includes(s));
-  check('animation only in the pinned entry rules, token-timed, no fill-mode/starting-style/allow-discrete',
-    listOk && timed && forbidden.length === 0,
-    `animRules=${JSON.stringify(animRules)}, timed=${timed}, forbidden=${JSON.stringify(forbidden)}`);
+  check('animation only in the pinned entry rules and the update pulse, token-timed, no fill-mode/starting-style/allow-discrete',
+    listOk && timed && pulseTimed && forbidden.length === 0,
+    `animRules=${JSON.stringify(animRules)}, timed=${timed}, pulse=${pulseTimed}, forbidden=${JSON.stringify(forbidden)}`);
 }
 
 {
@@ -275,9 +287,11 @@ const NON_BUTTON_CONSUMERS: readonly string[] = [
 }
 
 {
-  const easeConsumers = rules.filter((r) => r.body.includes('var(--motion-ease)')).map((r) => r.selector).sort();
+  const easeConsumers = rules
+    .filter((r) => r.body.includes('var(--motion-ease)') && r.selector !== UPDATE_PULSE_RULE)
+    .map((r) => r.selector).sort();
   const fastConsumers = rules.filter((r) => r.body.includes('var(--motion-fast) var(--motion-ease)')).map((r) => r.selector).sort();
-  check('every easing consumer pairs it with the fast duration token',
+  check('every easing consumer pairs it with the fast duration token (the update pulse scales it instead)',
     easeConsumers.length === fastConsumers.length && easeConsumers.every((s, i) => s === fastConsumers[i]),
     `easeConsumers=${JSON.stringify(easeConsumers)}, paired=${JSON.stringify(fastConsumers)}`);
 }

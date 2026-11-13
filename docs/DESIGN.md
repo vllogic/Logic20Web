@@ -614,9 +614,12 @@ plain links to the source repository, LICENSE and NOTICE.md.
 The update state
 comes from `getUpdateState()` / `onUpdateStateChange()` / `applyUpdate()` in
 `src/ui/pwaUpdate.ts` (`off` without a service worker, `idle`, `ready`). A waiting version
-also shows a fixed top-right card — "A new version is ready." — with Update and Later;
-Later hides it for this page load, the state stays `ready`. Update activates the waiting
-worker and reloads once it controls the page.
+turns the top-right update command (beside language and theme) from grey to brand-coloured
+with a ring that converges inward, and also shows a fixed top-right card — "A new version
+is ready." — with Update and Later; Later hides the card for this page load, the state stays
+`ready`, and the command still offers the update. Either click activates the waiting worker
+and reloads once it controls the page; the new shell is already precached, and activation
+drops the previous version's cache.
 
 - One panel at a time; one presenter. The panel switcher opens it; the same control closes
   it. A collapsed panel leaves a full-height 24 px reopen strip at the right edge (in flow,

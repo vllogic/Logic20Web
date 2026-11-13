@@ -834,8 +834,12 @@ Key transitions (the full table is generated in one pure module):
     install. A 14 MB install-time fill can keep the install event pending long enough for
     Chrome to mark the worker redundant, leaving the page uncontrolled; the decode worker's
     boot warm-up is the first user, so the next reload/offline start hits the cache.
-  - No `skipWaiting` on install. A waiting version raises a localized notice with Reload;
-    only that click posts `SKIP_WAITING`, and the page reloads on `controllerchange`.
+  - No `skipWaiting` on install. A waiting version turns the toolbar's update command
+    brand-coloured with a converging ring (grey and inert while current) and raises a
+    localized notice; either click posts `SKIP_WAITING`, and the page reloads on
+    `controllerchange`. The waiting worker has already precached the new shell, so the
+    click only activates it; activation deletes the previous `shell-<version>` cache
+    (`rotate()`), releasing the old version's storage.
     Registration starts before App constructs (so the decode warm-up can wait for the
     shell), only when `__SLOGICWEB_PWA__` (false for `vite` dev and for the portable
     build), `navigator.serviceWorker`, a secure context and an http(s) URL all hold —

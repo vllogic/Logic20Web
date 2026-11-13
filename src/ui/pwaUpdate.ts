@@ -41,6 +41,7 @@ export function onUpdateStateChange(cb: (s: UpdateState) => void): () => void {
 function setState(next: UpdateState): void {
   if (next === state) return;
   state = next;
+  renderUpdateButton();
   for (const cb of listeners) cb(next);
 }
 
@@ -71,6 +72,43 @@ export function applyUpdate(): void {
 }
 
 let notice: HTMLDivElement | null = null;
+
+/**
+ * The toolbar update command (index.html #btn-update). It stays grey and inert until a
+ * new version has finished installing; then it turns brand-coloured with a ring that
+ * keeps converging inward until the user clicks it.
+ *
+ * "Ready" already means the resources are loaded: the worker's install handler
+ * precached the new shell before it reached `installed`, and only then does
+ * markWaiting() fire. The click therefore just calls applyUpdate(); activation
+ * deletes the previous shell cache (rotate() in src/pwa/sw.js), so the old version's
+ * storage is released. The update notice remains available for discoverability.
+ */
+let updateButton: HTMLButtonElement | null = null;
+
+function renderUpdateButton(): void {
+  const button = updateButton;
+  if (!button) return;
+  const ready = state === 'ready';
+  button.classList.toggle('ready', ready);
+  button.setAttribute('aria-disabled', ready ? 'false' : 'true');
+  const titleKey = ready ? 'toolbar.updateReady' : 'toolbar.updateIdle';
+  button.setAttribute('data-i18n-title', titleKey);
+  button.title = t(titleKey);
+  button.setAttribute('aria-label', t('toolbar.update'));
+}
+
+function wireUpdateButton(): void {
+  const button = document.getElementById('btn-update');
+  if (!(button instanceof HTMLButtonElement)) return;
+  updateButton = button;
+  button.addEventListener('click', () => {
+    if (state === 'ready') applyUpdate();
+  });
+  onLocaleChange(renderUpdateButton);
+  renderUpdateButton();
+}
+
 
 function renderNotice(): void {
   if (!notice) return;
@@ -130,6 +168,7 @@ export function whenServiceWorkerReady(): Promise<void> {
 
 /** Register the shell worker when this build and page allow it. Never throws. */
 export function initServiceWorker(): void {
+  wireUpdateButton();
   if (!__SLOGICWEB_PWA__) return;
   if (!shouldRegister({
     pwaBuild: __SLOGICWEB_PWA__,

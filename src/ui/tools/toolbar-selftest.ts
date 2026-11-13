@@ -436,7 +436,8 @@ check(
 const leftCommandIds = ['btn-connect', 'transport', 'btn-open', 'btn-save', 'btn-fullscreen', 'btn-settings'];
 const languageCommandId = 'btn-language';
 const themeCommandId = 'btn-theme';
-const commandIds = [...leftCommandIds, languageCommandId, themeCommandId];
+const updateCommandId = 'btn-update';
+const commandIds = [...leftCommandIds, languageCommandId, themeCommandId, updateCommandId];
 
 const toolbarGroupStarts = [...toolbar.matchAll(/<div class="toolbar-group"[^>]*>/g)]
   .map((match) => match.index ?? -1);
@@ -554,7 +555,7 @@ check(
 const separatorCount = toolbar.match(/role="separator"/g)?.length ?? 0;
 const verticalSeparatorCount = toolbar.match(/aria-orientation="vertical"/g)?.length ?? 0;
 check(
-  'nine commands expose shadcn anatomy, one media wrapper and decorative short label each, distinct icons, and separators',
+  'ten commands expose shadcn anatomy, one media wrapper and decorative short label each, distinct icons, and separators',
   anatomyFailures.length === 0 && iconSignatures.size === commandIds.length &&
     separatorCount === 2 && verticalSeparatorCount === 2,
   `failures=${JSON.stringify(anatomyFailures)}, icons=${iconSignatures.size}, separators=${separatorCount}/${verticalSeparatorCount}`,
@@ -716,28 +717,29 @@ const switchGroupStart = switchGroup?.start ?? -1;
 const switchGroupMarkup = switchGroup?.markup ?? '';
 const languageIndex = switchGroupMarkup.indexOf(`id="${languageCommandId}"`);
 const themeIndex = switchGroupMarkup.indexOf(`id="${themeCommandId}"`);
+const updateIndex = switchGroupMarkup.indexOf(`id="${updateCommandId}"`);
 const switchGroupButtons = switchGroupMarkup.match(/<button\b/g)?.length ?? 0;
 const switchGroupOrder = languageIndex >= 0 && themeIndex > languageIndex &&
-  switchGroupButtons === 2;
+  updateIndex > themeIndex && switchGroupButtons === 3;
 const switchGroupAccessible = switchGroupMarkup.includes('role="group"') &&
-  switchGroupMarkup.includes('aria-label="Language and theme"') &&
+  switchGroupMarkup.includes('aria-label="Language, theme and update"') &&
   switchGroupMarkup.includes('data-i18n-aria-label="toolbar.switchGroup"');
 const spacerToGroup = spacerIndex >= 0 && switchGroupStart > spacerIndex
   ? toolbar.slice(spacerIndex, switchGroupStart) : '';
 const groupDirectlyAfterSpacer = spacerToGroup.length > 0 &&
   !spacerToGroup.includes('<button') && !spacerToGroup.includes('role="separator"');
 
-const themeButtonIndex = toolbar.indexOf(`id="${themeCommandId}"`);
-const themeButtonStart = themeButtonIndex >= 0 ? toolbar.lastIndexOf('<button', themeButtonIndex) : -1;
+const updateButtonIndex = toolbar.indexOf(`id="${updateCommandId}"`);
+const updateButtonStart = updateButtonIndex >= 0 ? toolbar.lastIndexOf('<button', updateButtonIndex) : -1;
 const lastButtonIndex = toolbar.lastIndexOf('<button');
-const themeIsFinalCommand = lastButtonIndex >= 0 && lastButtonIndex === themeButtonStart &&
-  toolbar.indexOf('role="separator"', themeButtonIndex) === -1;
+const updateIsFinalCommand = lastButtonIndex >= 0 && lastButtonIndex === updateButtonStart &&
+  toolbar.indexOf('role="separator"', updateButtonIndex) === -1;
 check(
-  'the language/theme group follows the spacer and the theme command is last',
-  switchGroupOrder && switchGroupAccessible && groupDirectlyAfterSpacer && themeIsFinalCommand,
-  `spacer@${spacerIndex}, group@${switchGroupStart}, theme@${themeButtonIndex}, ` +
+  'the language/theme/update group follows the spacer and the update command is last',
+  switchGroupOrder && switchGroupAccessible && groupDirectlyAfterSpacer && updateIsFinalCommand,
+  `spacer@${spacerIndex}, group@${switchGroupStart}, theme@${themeIndex}, update@${updateIndex}, ` +
   `groupOrder=${switchGroupOrder}, accessible=${switchGroupAccessible}, afterSpacer=${groupDirectlyAfterSpacer}, ` +
-  `final=${themeIsFinalCommand}`,
+  `final=${updateIsFinalCommand}`,
 );
 
 const groupRule = /#toolbar \.toolbar-group \{([\s\S]*?)\}/.exec(css)?.[1] ?? '';

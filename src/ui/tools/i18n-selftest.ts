@@ -338,17 +338,17 @@ function check(name: string, pass: boolean, detail: string): void {
     'emptyHint.line1', 'emptyHint.line2', 'drop.overlay',
     'toolbar.shortDevice', 'toolbar.shortStart', 'toolbar.shortOpen', 'toolbar.shortSave',
     'toolbar.shortFullscreen', 'toolbar.shortSettings', 'toolbar.shortLanguage',
-    'toolbar.shortTheme', 'error.details',
+    'toolbar.shortTheme', 'toolbar.shortUpdate', 'error.details',
   ];
   const expectedTitles = [
     'toolbar.startTitle', 'toolbar.openTitle', 'toolbar.saveTitle',
     'toolbar.enterFullscreenTitle',
-    'toolbar.themeTitle', 'toolbar.languageTitle',
+    'toolbar.themeTitle', 'toolbar.languageTitle', 'toolbar.updateIdle',
     'settings.titleHint', 'panel.resizeTitle',
   ];
   const expectedAriaLabels = [
-    'panel.resizeLabel', 'toolbar.switchGroup', 'toolbar.viewGroup', 'shortcuts.close',
-    'hints.barLabel', 'notice.dismiss',
+    'panel.resizeLabel', 'toolbar.switchGroup', 'toolbar.viewGroup', 'toolbar.update',
+    'shortcuts.close', 'hints.barLabel', 'notice.dismiss',
   ];
 
   const missingTextKeys = expectedText.filter((k) => !textFound.has(k));
