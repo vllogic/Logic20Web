@@ -1,3 +1,0 @@
-[submodule "sub_service/ota"]
-	path = sub_service/ota
-	url = git@github.com:sipeed/slogic_ota_server.git

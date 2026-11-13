@@ -346,7 +346,7 @@ export const SLOGIC32U3_PROFILE: DeviceProfile = {
   modes: { single: true, repeat: true, loop: true, record: true },
   // Documentation only: vendor support floor from the SLogic README
   // ("SLogic32U3 requires firmware S/N 202610150528 or newer"), also recorded in
-  // `sub_service/ota/firmware.json`. The value is an opaque hardware S/N, not a
+  // the vendor firmware metadata. The value is an opaque hardware S/N, not a
   // dotted version, and the stock register protocol exposes no version register,
   // so nothing parses or enforces it. Whole-word stream gating (the
   // `whole-word-head` quirk below) is documented from the earlier S/N

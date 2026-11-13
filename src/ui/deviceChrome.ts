@@ -117,8 +117,7 @@ export function deviceMenuItems(view: DeviceMenuView, actions: DeviceMenuActions
 }
 
 /**
- * The firmware updater. Only the CI deploy stages it beside the app (docs/DEPLOY.md);
- * dev servers, project-page builds and file:// portable copies have no `ota/` sibling,
+ * The firmware updater. This fork does not ship the Sipeed OTA pages beside the app,
  * so the public page is the one link that always resolves. It asks for its own WebUSB
  * grant, and this tab must release the board first (the menu disconnects before opening).
  */
