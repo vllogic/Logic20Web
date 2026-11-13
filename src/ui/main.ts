@@ -33,10 +33,12 @@ async function boot(): Promise<void> {
     initToolbarOverride();
     initPanelWidth();
     await initLocale();
+    // Register before App so App's decode warm-up can wait for the shell to activate
+    // instead of competing with its install for bandwidth. Registration itself is
+    // asynchronous and never delays the first paint.
+    initServiceWorker();
     window.slogicweb = new App();
     document.getElementById('empty-hint-starting')?.remove();
-    // After App: the offline shell must never delay or break the first paint.
-    initServiceWorker();
     try {
       initTooltip();
     } catch (e) {

@@ -115,6 +115,18 @@ function markWaiting(worker: ServiceWorker): void {
 
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
 
+let registration: Promise<ServiceWorkerRegistration> | null = null;
+
+/**
+ * The shell install/activation, for the decode warm-up. Resolves immediately in dev,
+ * portable and unsupported contexts; the caller also races it against a timeout so a
+ * broken registration cannot disable decoding forever.
+ */
+export function whenServiceWorkerReady(): Promise<void> {
+  if (!registration) return Promise.resolve();
+  return registration.then(() => navigator.serviceWorker.ready).then(() => undefined);
+}
+
 /** Register the shell worker when this build and page allow it. Never throws. */
 export function initServiceWorker(): void {
   if (!__SLOGICWEB_PWA__) return;
@@ -126,7 +138,9 @@ export function initServiceWorker(): void {
   })) return;
   // `updateViaCache: 'none'` keeps the browser from answering the worker check
   // from its HTTP cache; the server sends sw.js no-cache, but a proxy may not.
-  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((reg) => {
+  const pending = navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+  registration = pending;
+  pending.then((reg) => {
     setState('idle');
     // Only an UPDATE waits: with no controller this is the first install, nothing to swap.
     if (reg.waiting && navigator.serviceWorker.controller) markWaiting(reg.waiting);

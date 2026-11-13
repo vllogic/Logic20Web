@@ -109,6 +109,7 @@ import { formatCount, formatDuration, formatFreq, formatRate,
   formatStatusErrorDebug, statusDetailOf } from './format.js';
 import { applyStaticI18n, getLocale, LOCALE_LABELS, LOCALES, onLocaleChange, setLocale, t,
   type Locale, type MessageKey, type MessageVars } from './i18n.js';
+import { whenServiceWorkerReady } from './pwaUpdate.js';
 import {
   interactionAreaLabelKey, interactionAreaOf, interactionHints, MOUSE_PART_LABEL_KEYS,
   type HintSpec, type InteractionArea, type MousePart,
@@ -847,11 +848,29 @@ export class App {
     this.frame();
 
     // Pay the Pyodide cold start once. The portable build uses only embedded bytes,
-    // including on file://; dev uses the staged files served by Vite.
-    this.decodeClient.warmup().then(
-      () => { this.decodeWarm = true; this.renderPanels(); },
-      (e: unknown) => this.fail('error.decodeWorkerWarmup', e),
-    );
+    // including on file://; dev uses the staged files served by Vite. A hosted build
+    // waits for the shell worker to activate first, so the 14 MB runtime warm-up does
+    // not compete with (or delay) the service-worker install; its fetches then go
+    // through the worker and populate the runtime cache. The timeout keeps a broken
+    // registration from disabling decoding forever.
+    const warmDecode = (): void => {
+      this.decodeClient.warmup().then(
+        () => { this.decodeWarm = true; this.renderPanels(); },
+        (e: unknown) => this.fail('error.decodeWorkerWarmup', e),
+      );
+    };
+    if ('serviceWorker' in navigator) {
+      let started = false;
+      const start = (): void => {
+        if (started) return;
+        started = true;
+        warmDecode();
+      };
+      setTimeout(start, 5000);
+      whenServiceWorkerReady().then(start, start);
+    } else {
+      warmDecode();
+    }
     navigator.usb?.addEventListener('disconnect', (e) => this.usbDisconnected(e.device));
     navigator.usb?.addEventListener('connect', (e) => this.usbConnected(e.device));
     void this.reconnectGranted();

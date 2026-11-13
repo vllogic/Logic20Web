@@ -834,10 +834,10 @@ Key transitions (the full table is generated in one pure module):
     boot warm-up is the first user, so the next reload/offline start hits the cache.
   - No `skipWaiting` on install. A waiting version raises a localized notice with Reload;
     only that click posts `SKIP_WAITING`, and the page reloads on `controllerchange`.
-    Registration happens after App constructs, only when `__SLOGICWEB_PWA__` (false for
-    `vite` dev and for the portable build), `navigator.serviceWorker`, a secure context and
-    an http(s) URL all hold — never from `file://`. The portable build also emits no
-    manifest, icons or worker file.
+    Registration starts before App constructs (so the decode warm-up can wait for the
+    shell), only when `__SLOGICWEB_PWA__` (false for `vite` dev and for the portable
+    build), `navigator.serviceWorker`, a secure context and an http(s) URL all hold —
+    never from `file://`. The portable build also emits no manifest, icons or worker file.
   - Deploy: purge `index.html` and `sw.js` (docs/DEPLOY.md).
 - T0/T1/T2 hosting per §1.4. T1 is recommended for COOP/COEP and full CSP; T0 ships with
   the documented limitations; T2 serves isolated PCs from `localhost`.

@@ -232,12 +232,13 @@ try {
   const html = fs.readFileSync('index.html', 'utf8');
   const afterApp = main.indexOf('window.slogicweb = new App();');
   const hint = html.slice(html.indexOf('<div id="empty-hint"'), html.indexOf('</div>', html.indexOf('<div id="empty-hint"')));
-  check('boot: "Starting…" sits in #empty-hint and main.ts removes it, then registers',
+  check('boot: "Starting…" sits in #empty-hint, registration starts before App, hint clears after',
     hint.includes('id="empty-hint-starting"') && hint.includes('Starting…') &&
       hint.includes('正在启动…') && hint.includes('Démarrage…') && hint.includes('Запуск…') &&
       afterApp > 0 && main.indexOf("getElementById('empty-hint-starting')?.remove()") > afterApp &&
-      main.indexOf('initServiceWorker();') > afterApp,
-    'four locales, removed once App constructs');
+      main.indexOf('initServiceWorker();') > 0 &&
+      main.indexOf('initServiceWorker();') < afterApp,
+    'four locales, registration before App, hint removed once App constructs');
 
   const catalogs = { en, zhCN, fr, ru };
   const missing = Object.entries(catalogs).flatMap(([name, c]) =>
