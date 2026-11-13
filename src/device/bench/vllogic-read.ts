@@ -30,6 +30,7 @@ interface BenchResult extends BenchCase {
   seconds: number;
   target: number;
   elapsedMs: number;
+  configMs: number;
   ended: boolean;
   storeLength: number;
   commits: number;
@@ -41,6 +42,7 @@ interface BenchResult extends BenchCase {
   maxTransferMs: number;
   peakInFlight: number;
   lineMBs: number;
+  effMSa: number;
   error?: string;
 }
 
@@ -174,7 +176,9 @@ function row(result: BenchResult): HTMLTableRowElement {
     : [
       `${result.depth}×${result.readKiB}K/${result.batchMs}`,
       String(result.elapsedMs),
+      String(result.configMs),
       result.lineMBs.toFixed(2),
+      result.effMSa.toFixed(2),
       String(result.transfers),
       result.avgTransferMs.toFixed(2),
       result.maxTransferMs.toFixed(2),
@@ -206,9 +210,9 @@ async function runCase(bench: BenchCase): Promise<BenchResult> {
     : 0;
   const base: BenchResult = {
     ...bench, rate, channels, seconds, target,
-    elapsedMs: 0, ended: false, storeLength: 0, commits: 0, sinkMs: 0,
+    elapsedMs: 0, configMs: 0, ended: false, storeLength: 0, commits: 0, sinkMs: 0,
     transfers: 0, bytes: 0, shortReads: 0, avgTransferMs: 0, maxTransferMs: 0,
-    peakInFlight: 0, lineMBs: 0,
+    peakInFlight: 0, lineMBs: 0, effMSa: 0,
   };
 
   if (!usb) throw new Error('device is not connected');
@@ -219,6 +223,7 @@ async function runCase(bench: BenchCase): Promise<BenchResult> {
   const store = new PlanarSampleStore({ channelCount: channels, samplerate: rate });
   const sink = new BenchSink(store, batchSamples);
   let ended = false;
+  let endedAt = 0;
   const started = performance.now();
   try {
     await device.startChannelMajor(
@@ -229,18 +234,20 @@ async function runCase(bench: BenchCase): Promise<BenchResult> {
         commit: (samples) => sink.commit(samples),
       },
       undefined,
-      { deviceSampleLimit: target, onEnd: () => { ended = true; } },
+      { deviceSampleLimit: target, onEnd: () => { ended = true; endedAt = performance.now(); } },
     );
-    while (!ended && performance.now() - started < CAPTURE_TIMEOUT_MS) {
+    while (!ended && store.length < target && performance.now() - started < CAPTURE_TIMEOUT_MS) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     sink.flush();
-    const elapsed = performance.now() - started;
     const stats = device.readStats;
+    const endedAtSafe = endedAt > 0 ? endedAt : performance.now();
+    const elapsed = Math.max(1, endedAtSafe - stats.startedAt);
     return {
       ...base,
       elapsedMs: Math.round(elapsed),
-      ended,
+      configMs: Math.max(0, Math.round(stats.startedAt - started)),
+      ended: ended || store.length >= target,
       storeLength: store.length,
       commits: sink.commits,
       sinkMs: Number(sink.sinkMs.toFixed(1)),
@@ -251,6 +258,7 @@ async function runCase(bench: BenchCase): Promise<BenchResult> {
       maxTransferMs: Number(stats.maxTransferMs.toFixed(2)),
       peakInFlight: stats.peakInFlight,
       lineMBs: Number((stats.bytes / 1e6 / (elapsed / 1000)).toFixed(2)),
+      effMSa: Number((store.length / 1e6 / (elapsed / 1000)).toFixed(2)),
     };
   } finally {
     await device.stop().catch(() => undefined);
@@ -294,6 +302,7 @@ runButton.addEventListener('click', async () => {
         seconds: Number(secondsInput.value),
         target: 0,
         elapsedMs: 0,
+        configMs: 0,
         ended: false,
         storeLength: 0,
         commits: 0,
@@ -305,6 +314,7 @@ runButton.addEventListener('click', async () => {
         maxTransferMs: 0,
         peakInFlight: 0,
         lineMBs: 0,
+        effMSa: 0,
         error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
       };
       setStatus(`第 ${i + 1} 组失败：${result.error}`);

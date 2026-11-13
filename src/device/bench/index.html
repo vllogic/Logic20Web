@@ -27,15 +27,15 @@
 <body>
 <h1>Logic20 WebUSB 读取评估</h1>
 <p class="hint">
-  插入 Logic20，点击“连接设备”，然后点“运行评估”。每组都会重新采集
+  建议先用 16ch @ 160 MHz（约 320 MB/s）压满链路。插入 Logic20，点击“连接设备”，然后点“运行评估”。每组都会重新采集
   <span id="target-note"></span> 样本，结果可直接复制为 JSON。
 </p>
 
 <fieldset>
   <legend>采集</legend>
-  <label>采样率 <input id="rate" type="number" value="20000000" step="1000000" /> Hz</label>
-  <label>通道 <input id="channels" type="number" value="4" min="1" max="20" step="1" /></label>
-  <label>时长 <input id="seconds" type="number" value="1" min="0.1" step="0.1" /> s</label>
+  <label>采样率 <input id="rate" type="number" value="160000000" step="1000000" /> Hz</label>
+  <label>通道 <input id="channels" type="number" value="16" min="1" max="20" step="1" /></label>
+  <label>时长 <input id="seconds" type="number" value="0.25" min="0.05" step="0.05" /> s</label>
   <label>合并提交 <input id="batch" type="text" value="0, 8.33, 16.67" /> ms（0 = 每块提交，逗号分隔）</label>
 </fieldset>
 
@@ -55,7 +55,7 @@
 <table hidden id="table">
   <thead>
     <tr>
-      <th>depth/read/batch</th><th>用时 ms</th><th>行 MB/s</th><th>读取次数</th>
+      <th>depth/read/batch</th><th>采集 ms</th><th>配置 ms</th><th>总线 MB/s</th><th>有效 MSa/s</th><th>读取次数</th>
       <th>平均 ms</th><th>最大 ms</th><th>短包</th><th>峰值在飞</th>
       <th>提交次数</th><th>写入 ms</th><th>样本数</th>
     </tr>
