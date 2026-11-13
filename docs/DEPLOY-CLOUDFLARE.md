@@ -26,7 +26,23 @@ a custom domain. WebUSB needs HTTPS, which Pages provides automatically.
    | `NODE_VERSION` | `22` |
    | `LIBSIGROKDECODE_REF` | a libsigrokdecode commit SHA, e.g. `71f451443029322d57376214c330b518efd84f88` |
 
-4. Click **Save and Deploy**. The first build clones libsigrokdecode, runs
+4. Advanced settings — most fields stay at their defaults:
+
+   | Field | Value |
+   | --- | --- |
+   | Root directory | `/` (repository root) |
+   | Build image | latest v2/v3 |
+   | Deploy command | leave empty (Pages Git integration deploys `dist/`) |
+   | Submodules | **off** — `sub_service/ota` uses an SSH URL and is not staged here |
+   | Preview deployments | on if preview URLs are wanted; otherwise production only |
+   | Build watch paths | leave default (all paths); docs-only pushes then rebuild too |
+   | Compatibility flags/date | leave default; there are no Pages Functions |
+
+   `NODE_VERSION=22` and `LIBSIGROKDECODE_REF` are the only environment variables
+   that matter. The build script runs `npm ci --include=dev`, so a Cloudflare
+   `NODE_ENV=production` cannot omit TypeScript/Vite.
+
+5. Click **Save and Deploy**. The first build clones libsigrokdecode, runs
    `npm ci`, vendors Pyodide and the decoder tree, and builds `dist/`.
 
 ## What the build command does
