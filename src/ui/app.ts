@@ -484,6 +484,8 @@ export class App {
   private stopping = false;
   private captureStart = 0;
   private captureBytes = 0;
+  /** Channel-major sink coalescing the current capture into 120 Hz store commits. */
+  private captureCoalescer: ChannelMajorCoalescer | null = null;
   /** Samples the device could not deliver, appended as filler and marked as gaps. */
   private lostSamples = 0;
   private loopRetentionLen = 0;
@@ -6504,9 +6506,8 @@ export class App {
         this.analogScanner?.resetContinuity();
         if (store.length >= this.captureLimitSamples) this.captureFilled();
       };
-      // Filled by the channel-major branch; onEnd may fire before startChannelMajor
+      // Filled by the channel-major branch; onEnd may fire after startChannelMajor
       // returns, so the tail batch has to be publishable from there.
-      let coalescerRef: ChannelMajorCoalescer | null = null;
       const startOptions: CaptureStartOptions = softwareTrigger ? {
         // A loop capture windows the triggered stream downstream of the trigger: the
         // trigger's budget is unbounded (maxSamples Infinity), the store drops the
@@ -6635,7 +6636,7 @@ export class App {
         // device error (HSync semantics).
         ...(isLoop ? { loop: true } : { deviceSampleLimit: this.captureLimitSamples }),
         onEnd: () => {
-          coalescerRef?.flush();
+          this.captureCoalescer?.flush();
           if (generation !== this.captureGeneration) return;
           if (this.running) this.captureFilled();
         },
@@ -6657,12 +6658,12 @@ export class App {
             this.livePending = true;
           },
         );
-        coalescerRef = coalescer;
+        this.captureCoalescer = coalescer;
         await device.startChannelMajor(cfg, coalescer, undefined, startOptions);
         // onEnd normally flushed already; this is idempotent and covers a stop that
-        // bypassed the end callback.
+        // bypassed the end callback. The coalescer stays attached until finishCapture
+        // so a later onEnd can still publish the tail.
         coalescer.flush();
-        coalescerRef = null;
       } else {
         await device.start(cfg, interleavedSink, dropoutSink, startOptions);
       }
@@ -7209,6 +7210,11 @@ export class App {
   }
 
   private finishCapture(reason: CaptureStopReason = 'manual'): void {
+    // The channel-major sink may still hold a partial 120 Hz batch after a manual stop
+    // or a transport error (onEnd is not guaranteed on those paths). Publish it before
+    // anything reads the store length.
+    this.captureCoalescer?.flush();
+    this.captureCoalescer = null;
     this.settleHeldCaptureStart();
     // No more data will be scanned; the locked frame itself stays on screen.
     this.analogScanner = null;
