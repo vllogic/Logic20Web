@@ -292,6 +292,10 @@ export class VllogicDevice implements Device {
     this.emittedSamples += samples;
     if (this.targetSamples > 0 && this.emittedSamples >= this.targetSamples) {
       this.running = false;
+      // The data is complete: publish the end now. Pipelined reads may still be
+      // outstanding, and waiting for them in readLoop's finally would delay onEnd
+      // until a stopped board's reads drain (or timeout) for no benefit.
+      this.endOnce();
       void this.send(UhsifCmd.Stop).catch(() => undefined);
     }
   }
@@ -386,7 +390,7 @@ export class VllogicDevice implements Device {
     try {
       for (;;) {
         while (!completed.has(nextSequence)) {
-          if (inFlight.size === 0) break;
+          if (inFlight.size === 0 || !this.running) break;
           await new Promise<void>((resolve) => { wake = resolve; });
         }
         const item = completed.get(nextSequence);
