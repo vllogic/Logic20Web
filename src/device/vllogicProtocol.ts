@@ -16,7 +16,7 @@
  *     W1 = channel mask (20 bits)
  *     W2 = pwm1 | div << 15 | drop << 22 | capturing << 23 | lut_check << 24
  *     W3 = pwm0 | vco << 8 | mode << 10 | payload_len << 12 | seq << 24
- *   payload_len bytes, a sequence of u32 payload words.
+ *   payload_len 32-bit payload words, in [120, 4092] (a block body is 4 x that many bytes)
  *
  * Payload words are **channel-major**: one word per enabled physical lane, in
  * ascending physical-lane order. Each word holds 32 consecutive samples of that lane
@@ -48,6 +48,7 @@ export const VLLOGIC_DIV_MAX = 120;
 /** UHSIF command frame / block header sizes. */
 export const UHSIF_CMD_SIZE = 16;
 export const UHSIF_HDR_SIZE = 16;
+/** The payload length field counts 32-bit words, not bytes (uhsif.v, uhsif_rx.c). */
 export const UHSIF_CMD_MAGIC16 = 0xC7F3;
 export const UHSIF_BLK_MAGIC16 = 0x6CC6;
 export const UHSIF_PAY_MIN = 120;
@@ -303,8 +304,8 @@ export interface VllogicParserStats {
 /**
  * Incremental UHSIF decoder. Feed it arbitrary WebUSB transfer chunks; it carries a
  * partial header and a partial word across calls and delivers complete snapshots in
- * batches. One snapshot is `nchan` words, and one word is 32 samples; a full 4092-byte
- * payload is 51 snapshots at 20 lanes. Delivering a batch instead of one callback per
+ * batches. One snapshot is `nchan` words, and one word is 32 samples; a full 4092-word
+ * payload is 204 snapshots at 20 lanes. Delivering a batch instead of one callback per
  * snapshot is what keeps the JS sink-call count in the thousands per second rather than
  * the millions. The `words` array is snapshot-major and reused between calls, so the
  * callback must consume it synchronously.
@@ -332,7 +333,7 @@ export class VllogicParser {
     private readonly map: VllogicChannelMap,
     private readonly onBatch: (words: Uint32Array, snapshots: number) => void,
   ) {
-    const perPayload = Math.floor((UHSIF_PAY_MAX / 4) / map.nchan) * map.nchan;
+    const perPayload = Math.floor(UHSIF_PAY_MAX / map.nchan) * map.nchan;
     this.batch = new Uint32Array(Math.max(map.nchan, perPayload));
   }
 
@@ -354,13 +355,16 @@ export class VllogicParser {
     while (off < data.length) {
       if (this.state === 2) {
         const remaining = data.length - off;
-        const whole = Math.min(this.payRem, remaining - (remaining % 4));
-        let end = off + whole;
+        // `payRem` counts payload dwords, not bytes: the firmware's header field is
+        // `tx_payload_len` in words (uhsif.v) and libsigrok decrements it once per
+        // u32 (uhsif_rx.c:928-933).
+        const wholeWords = Math.min(this.payRem, Math.floor(remaining / 4));
+        const end = off + wholeWords * 4;
         while (off + 4 <= end) {
           const word = data[off]! | (data[off + 1]! << 8) |
             (data[off + 2]! << 16) | (data[off + 3]! << 24);
           off += 4;
-          this.payRem -= 4;
+          this.payRem -= 1;
           this.acceptWord(word >>> 0);
         }
         if (this.payRem === 0) {
@@ -473,7 +477,7 @@ export class VllogicParser {
       this.state = 0;
       return;
     }
-    if (plen < UHSIF_PAY_MIN || plen > UHSIF_PAY_MAX || (plen & 3) !== 0) {
+    if (plen < UHSIF_PAY_MIN || plen > UHSIF_PAY_MAX) {
       this.stats.badLen++;
       this.batchWords = 0;
       this.batchSnapshots = 0;

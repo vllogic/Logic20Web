@@ -76,10 +76,11 @@ a non-ascending ring would repeat lane 0.
   W1 = physical channel mask
   W2 = pwm1 | div << 15 | drop << 22 | capturing << 23 | lut_check << 24
   W3 = pwm0 | vco << 8 | mode << 10 | payload_len << 12 | seq << 24
-payload_len bytes of payload
+payload_len 32-bit payload words
 ```
 
-`payload_len` is in `[120, 4092]` and is a multiple of four. The payload is
+`payload_len` counts 32-bit payload words and is in `[120, 4092]`; it does not have
+to be a multiple of four. The payload is
 **channel-major**: one `u32` per enabled physical lane, in ascending physical
 lane order. Each word holds 32 consecutive samples of that lane, bit 0 first.
 One complete snapshot is `nchan` words, i.e. 32 sample instants. A payload does

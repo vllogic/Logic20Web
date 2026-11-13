@@ -49,7 +49,7 @@ function u32(value: number): number[] {
 function block(
   mask: number, div: number, seq: number, payload: readonly number[], corrupt = false,
 ): Uint8Array {
-  const plen = payload.length * 4;
+  const plen = payload.length;
   const w1 = mask >>> 0;
   const w2 = (div << 15) >>> 0;
   const w3 = ((plen << 12) | (seq << 24)) >>> 0;
@@ -195,7 +195,7 @@ async function main(): Promise<void> {
   );
 
   // ---- parser ------------------------------------------------------------
-  const snapshots = 5;
+  const snapshots = 6;
   const wordsPerSnapshot: number[][] = [];
   for (let s = 0; s < snapshots; s++) {
     wordsPerSnapshot.push(all.map((channel) => ((channel * 0x9E3779B1) ^ (s * 0x45D9F3B)) >>> 0));
@@ -224,16 +224,34 @@ async function main(): Promise<void> {
     `snapshots=${received.length}/${snapshots} acks=${parser.stats.acks} crcFail=${parser.stats.crcFail}`,
   );
 
-  // A payload cut by end-of-stream must not invent a snapshot.
+  // A 121-word payload is 6 whole 20-lane snapshots plus 1 dangling word: end of
+  // stream publishes the 6 and drops the partial.
   let delivered = 0;
   const cut = new VllogicParser(map, (_words, batchSnapshots) => { delivered += batchSnapshots; });
-  cut.feed(block(0xFFFFF, 15, 10, [0x1, 0x2, 0x3]));
+  cut.feed(block(0xFFFFF, 15, 10, Array.from({ length: 121 }, (_, i) => i + 1)));
   cut.finish();
   check(
-    'a truncated snapshot is dropped at end of stream',
-    delivered === 0,
+    'a partial trailing snapshot is dropped at end of stream',
+    delivered === 6,
     `delivered=${delivered}`,
   );
+
+  // The real block geometry: 4092 payload dwords is 204 snapshots at 20 lanes plus a
+  // 12-word tail. This is the regression guard for treating payload_len as bytes.
+  {
+    const payload4092 = Array.from({ length: 4092 }, (_, i) => (i * 0x9E3779B1) >>> 0);
+    let delivered = 0;
+    const full = new VllogicParser(map, (_words, n) => { delivered += n; });
+    full.feed(block(0xFFFFF, 15, 11, payload4092));
+    full.finish();
+    check(
+      'a real 4092-word payload yields 204 snapshots with no junk',
+      delivered === 204 && full.stats.payloadWords === 4092 &&
+        full.stats.junkBytes === 0 && full.stats.crcFail === 0 && full.stats.badLen === 0,
+      `delivered=${delivered} words=${full.stats.payloadWords} junk=${full.stats.junkBytes} ` +
+        `crcFail=${full.stats.crcFail} badLen=${full.stats.badLen}`,
+    );
+  }
 
   // ---- device transport over a fake WebUSB port --------------------------
   {
@@ -309,7 +327,7 @@ async function main(): Promise<void> {
   {
     const fake = new FakeUsb();
     fake.varyDelay = true;
-    const perBlock = 8; // 32 payload words = 128 B, above UHSIF_PAY_MIN
+    const perBlock = 30; // 120 payload words, the firmware minimum
     const blocks = 16;
     const words: number[] = [];
     for (let i = 0; i < blocks; i++) {

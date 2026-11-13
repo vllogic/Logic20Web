@@ -25,6 +25,7 @@ import type {
 } from './types.js';
 import {
   UHSIF_DEFAULT_PAYLOAD,
+  UHSIF_PAY_MAX,
   UhsifCmd,
   VLLOGIC_EP_IN,
   VLLOGIC_EP_OUT,
@@ -249,7 +250,8 @@ export class VllogicDevice implements Device {
     this.ended = false;
     this.stopRequested = false;
     this.running = true;
-    const maxSnapshots = Math.max(1, Math.floor((4092 / 4) / map.nchan));
+    // A payload is 4092 words, so this many snapshots can arrive before a flush.
+    const maxSnapshots = Math.max(1, Math.floor(UHSIF_PAY_MAX / map.nchan));
     this.runBuffers = Array.from(
       { length: map.nchan }, () => new Uint32Array(maxSnapshots),
     );
@@ -263,7 +265,7 @@ export class VllogicDevice implements Device {
 
   /**
    * Deinterleave one parser batch into per-lane runs and publish it as one store frame.
-   * A 4092-byte payload is 51 snapshots at 20 lanes, so this runs the sink 20 times per
+   * A 4092-word payload is 204 snapshots at 20 lanes, so this runs the sink 20 times per
    * ~16 KiB transfer instead of 20 times per 80-byte snapshot.
    */
   private acceptBatch(words: Uint32Array, snapshots: number): void {
