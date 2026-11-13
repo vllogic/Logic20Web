@@ -293,9 +293,15 @@ export interface VllogicParserStats {
 
 /**
  * Incremental UHSIF decoder. Feed it arbitrary WebUSB transfer chunks; it carries a
- * partial header and a partial word across calls and calls `onSnapshot` once per
- * complete 32-sample snapshot. The `words` array is reused between calls, so the
- * callback must consume it synchronously (the device layer does).
+ * partial header and a partial word across calls and delivers complete snapshots in
+ * batches. One snapshot is `nchan` words, and one word is 32 samples; a full 4092-byte
+ * payload is 51 snapshots at 20 lanes. Delivering a batch instead of one callback per
+ * snapshot is what keeps the JS sink-call count in the thousands per second rather than
+ * the millions. The `words` array is snapshot-major and reused between calls, so the
+ * callback must consume it synchronously.
+ *
+ * `onBatch(words, snapshots)`: `words[s * nchan + lane]` is the word for snapshot `s`
+ * and physical lane `lane`.
  */
 export class VllogicParser {
   readonly stats: VllogicParserStats = {
@@ -307,16 +313,18 @@ export class VllogicParser {
   private readonly hdr = new Uint8Array(UHSIF_HDR_SIZE);
   private hdrLen = 0;
   private payRem = 0;
-  private snapPos = 0;
-  private readonly snap: Uint32Array;
+  private readonly batch: Uint32Array;
+  private batchWords = 0;
+  private batchSnapshots = 0;
   private carry = new Uint8Array(0);
   private dropActive = false;
 
   constructor(
     private readonly map: VllogicChannelMap,
-    private readonly onSnapshot: (words: Uint32Array) => void,
+    private readonly onBatch: (words: Uint32Array, snapshots: number) => void,
   ) {
-    this.snap = new Uint32Array(map.nchan);
+    const perPayload = Math.floor((UHSIF_PAY_MAX / 4) / map.nchan) * map.nchan;
+    this.batch = new Uint32Array(Math.max(map.nchan, perPayload));
   }
 
   /** Number of 32-sample snapshots delivered so far. */
@@ -348,6 +356,9 @@ export class VllogicParser {
         }
         if (this.payRem === 0) {
           this.state = 0;
+          // Publish the snapshots this payload completed. A payload can end in the
+          // middle of a snapshot; that partial stays in the batch for the next block.
+          this.flushBatch();
           continue;
         }
         // A partial word or a partial payload stays for the next feed().
@@ -373,8 +384,18 @@ export class VllogicParser {
         return;
       }
       if ((data[off]! | (data[off + 1]! << 8)) !== UHSIF_BLK_MAGIC16) {
-        this.stats.junkBytes++;
-        off++;
+        // The device pads each 4092-byte payload to a 16 KiB transfer, so most
+        // scan bytes are zero. Jump to the next 0xC6 (the magic's low byte) with
+        // the native indexOf instead of walking the padding one byte at a time.
+        const next = data.indexOf(0xC6, off + 1);
+        if (next < 0 || next + 3 >= data.length) {
+          const keep = Math.max(off, next >= 0 ? next : data.length - 3);
+          this.stats.junkBytes += data.length - off;
+          this.carry = data.slice(keep);
+          return;
+        }
+        this.stats.junkBytes += next - off;
+        off = next;
         continue;
       }
       this.hdr.set(data.subarray(off, off + 4), 0);
@@ -384,9 +405,11 @@ export class VllogicParser {
     }
   }
 
-  /** End of stream: drop a partial snapshot rather than invent samples. */
+  /** End of stream: publish complete snapshots, drop a partial one. */
   finish(): void {
-    this.snapPos = 0;
+    this.flushBatch();
+    this.batchWords = 0;
+    this.batchSnapshots = 0;
     this.hdrLen = 0;
     this.payRem = 0;
     this.state = 0;
@@ -395,12 +418,27 @@ export class VllogicParser {
 
   private acceptWord(word: number): void {
     this.stats.payloadWords++;
-    this.snap[this.snapPos++] = word;
-    if (this.snapPos === this.snap.length) {
-      this.snapPos = 0;
-      this.stats.snapshots++;
-      this.onSnapshot(this.snap);
+    this.batch[this.batchWords++] = word;
+    if (this.batchWords % this.map.nchan === 0) {
+      this.batchSnapshots++;
+      if (this.batchWords >= this.batch.length) this.flushBatch();
     }
+  }
+
+  /**
+   * Publish complete snapshots and keep the words of an incomplete one at the front.
+   * The callback consumes `batch` synchronously, so the copy happens after it returns.
+   */
+  private flushBatch(): void {
+    const completeWords = this.batchSnapshots * this.map.nchan;
+    if (this.batchSnapshots > 0) {
+      this.stats.snapshots += this.batchSnapshots;
+      this.onBatch(this.batch, this.batchSnapshots);
+    }
+    const remainder = this.batchWords - completeWords;
+    if (remainder > 0) this.batch.copyWithin(0, completeWords, this.batchWords);
+    this.batchWords = remainder;
+    this.batchSnapshots = 0;
   }
 
   private parseHeader(): void {
@@ -412,7 +450,8 @@ export class VllogicParser {
       this.stats.crcFail++;
       // The bytes read as a header may contain the real next header; rescan from
       // the byte after the first magic byte instead of swallowing the gate.
-      this.snapPos = 0;
+      this.batchWords = 0;
+      this.batchSnapshots = 0;
       this.hdr.copyWithin(0, 1);
       this.hdrLen = UHSIF_HDR_SIZE - 1;
       this.state = 1;
@@ -427,7 +466,8 @@ export class VllogicParser {
     }
     if (plen < UHSIF_PAY_MIN || plen > UHSIF_PAY_MAX || (plen & 3) !== 0) {
       this.stats.badLen++;
-      this.snapPos = 0;
+      this.batchWords = 0;
+      this.batchSnapshots = 0;
       this.state = 0;
       return;
     }
@@ -437,7 +477,8 @@ export class VllogicParser {
     this.dropActive = drop;
     if ((w1 & 0xFFFFF) !== this.map.mask) {
       this.stats.maskMismatch++;
-      this.snapPos = 0;
+      this.batchWords = 0;
+      this.batchSnapshots = 0;
     }
     this.payRem = plen;
     this.state = 2;

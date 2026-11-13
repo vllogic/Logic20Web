@@ -184,13 +184,16 @@ async function main(): Promise<void> {
   // Junk + a corrupt header must not consume the real header that follows it.
   const corrupt = block(0xFFFFF, 15, 8, [0xDEADBEEF], true);
   const ack = block(0xFFFFF, 15, 9, []);
-  const received: number[][] = [];
-  const parser = new VllogicParser(map, (words) => received.push(Array.from(words)));
+  const batches: Array<{ words: number[]; snapshots: number }> = [];
+  const parser = new VllogicParser(map, (words, batchSnapshots) =>
+    batches.push({ words: Array.from(words), snapshots: batchSnapshots }));
   const source = Uint8Array.from([0x00, 0x11, 0x22, ...corrupt, ...ack, ...stream]);
   // Feed in awkward chunks so a header and a word both straddle a transfer boundary.
   for (let off = 0; off < source.length; off += 7) {
     parser.feed(source.subarray(off, Math.min(source.length, off + 7)));
   }
+  const received = batches.flatMap((batch) => Array.from({ length: batch.snapshots }, (_, s) =>
+    batch.words.slice(s * map.nchan, (s + 1) * map.nchan)));
   const matches = received.length === snapshots &&
     received.every((words, i) => words.every((word, j) => word === wordsPerSnapshot[i]![j]));
   check(
@@ -200,14 +203,14 @@ async function main(): Promise<void> {
   );
 
   // A payload cut by end-of-stream must not invent a snapshot.
-  const cut = new VllogicParser(map, () => received.push([]));
-  const before = received.length;
+  let delivered = 0;
+  const cut = new VllogicParser(map, (_words, batchSnapshots) => { delivered += batchSnapshots; });
   cut.feed(block(0xFFFFF, 15, 10, [0x1, 0x2, 0x3]));
   cut.finish();
   check(
     'a truncated snapshot is dropped at end of stream',
-    received.length === before,
-    `delivered=${received.length - before}`,
+    delivered === 0,
+    `delivered=${delivered}`,
   );
 
   // ---- device transport over a fake WebUSB port --------------------------
@@ -246,7 +249,7 @@ async function main(): Promise<void> {
     ];
     check(
       'device transport configures, starts and lands every channel word',
-      ended && store.length === snapshots * 32 && commits === snapshots &&
+      ended && store.length === snapshots * 32 && commits >= 1 &&
         expected.every((cmd, i) => commands[i] === cmd) &&
         commands.includes(UhsifCmd.Stop) &&
         store.sampleAt(0, 0) === (payload[1]! & 1) &&

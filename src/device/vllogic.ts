@@ -73,6 +73,8 @@ export class VllogicDevice implements Device {
   private parser: VllogicParser | null = null;
   private map: VllogicChannelMap | null = null;
   private sink: ChannelSampleSink | null = null;
+  /** One word-run per physical lane, reused for every batch (no per-batch garbage). */
+  private runBuffers: Uint32Array[] = [];
   private emittedSamples = 0;
   private targetSamples = 0;
   private onCaptureEnd: (() => void) | null = null;
@@ -178,29 +180,40 @@ export class VllogicDevice implements Device {
     this.ended = false;
     this.stopRequested = false;
     this.running = true;
-    this.parser = new VllogicParser(map, (words) => this.acceptSnapshot(words));
+    const maxSnapshots = Math.max(1, Math.floor((4092 / 4) / map.nchan));
+    this.runBuffers = Array.from(
+      { length: map.nchan }, () => new Uint32Array(maxSnapshots),
+    );
+    this.parser = new VllogicParser(map, (words, snapshots) =>
+      this.acceptBatch(words, snapshots));
 
     // Arm the IN transfer before START so the first block is not lost to a race.
     this.loopDone = this.readLoop();
     await this.send(UhsifCmd.Start);
   }
 
-  private acceptSnapshot(words: Uint32Array): void {
+  /**
+   * Deinterleave one parser batch into per-lane runs and publish it as one store frame.
+   * A 4092-byte payload is 51 snapshots at 20 lanes, so this runs the sink 20 times per
+   * ~16 KiB transfer instead of 20 times per 80-byte snapshot.
+   */
+  private acceptBatch(words: Uint32Array, snapshots: number): void {
     const map = this.map;
     const sink = this.sink;
-    if (!map || !sink) return;
+    if (!map || !sink || snapshots <= 0) return;
     const start = this.emittedSamples;
+    const samples = snapshots * 32;
     sink.begin?.(map.logical);
     for (let i = 0; i < map.physList.length; i++) {
+      const run = this.runBuffers[i]!;
+      for (let s = 0; s < snapshots; s++) run[s] = words[s * map.nchan + i]!;
       const physical = map.physList[i]!;
       const logical = map.phys2log[physical]!;
       if (logical < 0) continue;
-      // A one-word view is enough: appendChannel() consumes it synchronously and the
-      // parser reuses `words` only after this callback returns.
-      sink.channel(logical, start, words.subarray(i, i + 1));
+      sink.channel(logical, start, run.subarray(0, snapshots));
     }
-    sink.commit(32);
-    this.emittedSamples += 32;
+    sink.commit(samples);
+    this.emittedSamples += samples;
     if (this.targetSamples > 0 && this.emittedSamples >= this.targetSamples) {
       this.running = false;
       void this.send(UhsifCmd.Stop).catch(() => undefined);
