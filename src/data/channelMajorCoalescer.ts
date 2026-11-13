@@ -69,7 +69,7 @@ export class ChannelMajorCoalescer implements ChannelMajorSink {
       );
     }
     const index = this.channels.indexOf(channel);
-    if (index < 0) return;
+    if (index < 0) throw new Error(`channel ${channel} was not declared for this frame`);
     const used = this.used[index]!;
     const need = used + words.length;
     let buffer = this.words[index]!;

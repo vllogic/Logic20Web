@@ -77,6 +77,15 @@ function run(batch: number, blocks: number) {
 }
 
 {
+  let threw = false;
+  const store = new PlanarSampleStore({ channelCount: 4, samplerate: 20e6 });
+  const sink = new ChannelMajorCoalescer(store, 64);
+  sink.begin([0, 1, 2, 3]);
+  try { sink.channel(5, 0, new Uint32Array(1)); } catch { threw = true; }
+  check('an undeclared channel is rejected', threw, `threw=${threw}`);
+}
+
+{
   const { store } = run(displayBatchSamples(20e6), 6000); // ~192 ms of blocks at 20 MHz
   check('a 120 Hz batch holds a growing capture without gaps',
     store.length === 6000 * 32,
