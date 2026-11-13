@@ -76,6 +76,8 @@ const SYNTHETIC: Record<string, string> = {
   'DEPLOY.txt': 'deploy',
   'CNAME': 'slogic.example',
   '.nojekyll': '',
+  // Cloudflare consumes this file and does not serve it; precaching it would 404.
+  '_headers': '/*\n  X-Content-Type-Options: nosniff\n',
 };
 const INLINED = ['assets/index-AAAAAAAA.js', 'assets/index-BBBBBBBB.css'];
 
@@ -131,7 +133,8 @@ try {
     same(shell.hashed, ['assets/usbWorker-DDDDDDDD.js', 'assets/worker-__CcCcCc.js', 'fr-EEEEEEEE.js']),
     shell.hashed.join(', '));
   check('precache: plain shell files (favicon, icons, manifest), no licences/host files/sw.js',
-    same(shell.plain, ['favicon.svg', ...ICONS.map((i) => `icons/${i}`), 'manifest.webmanifest']),
+    same(shell.plain, ['favicon.svg', ...ICONS.map((i) => `icons/${i}`), 'manifest.webmanifest']) &&
+      !shell.plain.includes('_headers'),
     shell.plain.join(', '));
   check('runtime (cached on first use): every Pyodide file and the decoders zip',
     same(shell.runtime, ['decoders/decoders-abcdef0123.zip',

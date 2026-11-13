@@ -50,9 +50,15 @@ export function webManifest() {
 /** Vite's `[name]-[hash]` file names (an 8-character base64url hash). */
 const HASHED = /-[A-Za-z0-9_-]{8}\.(?:js|css)$/;
 
-/** Published but never fetched by the page: licences, deploy notes, host config, maps. */
+/**
+ * Published but never fetched by the page: licences, deploy notes, host config, maps.
+ * `_headers` / `_redirects` / `_routes.json` are consumed by Cloudflare and are NOT
+ * served as static assets; adding them to the precache would make the install fail
+ * with a 404 and leave the worker redundant.
+ */
 const NOT_LOADED = (rel) =>
   rel.endsWith('.map') || rel === 'sw.js' || rel === 'CNAME' || rel === '.nojekyll' ||
+  rel === '_headers' || rel === '_redirects' || rel === '_routes.json' ||
   (!rel.includes('/') && rel.endsWith('.txt'));
 
 function walk(dir, root = dir, out = []) {
