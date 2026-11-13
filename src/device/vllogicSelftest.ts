@@ -27,7 +27,7 @@ import {
   vllogicRateForDiv,
   vllogicThresholdToPwm,
 } from './vllogicProtocol.js';
-import { VllogicDevice } from './vllogic.js';
+import { VllogicDevice, vllogicReadTuning } from './vllogic.js';
 import { PlanarSampleStore } from '../data/planarStore.js';
 
 interface Result {
@@ -66,6 +66,11 @@ class FakeUsb {
   readonly serialNumber = 'selftest';
   readonly chunks: Uint8Array[] = [];
   readonly commands: Array<{ cmd: number; param: number }> = [];
+  delayMs = 0;
+  varyDelay = false;
+  calls = 0;
+  maxConcurrent = 0;
+  private active = 0;
   private started = false;
 
   async open(): Promise<void> {}
@@ -84,17 +89,33 @@ class FakeUsb {
   }
 
   async transferIn(_endpoint: number, _length: number): Promise<USBInTransferResult> {
-    while (!this.started) await new Promise((resolve) => setTimeout(resolve, 2));
+    // Submission order is the endpoint's FIFO order, so bind the block before waiting
+    // for START; the *completion* may still arrive out of order.
+    const call = this.calls++;
     const chunk = this.chunks.shift();
-    if (!chunk) return { status: 'ok', data: new DataView(new ArrayBuffer(0)) };
-    return {
-      status: 'ok',
-      data: new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength),
-    };
+    while (!this.started) await new Promise((resolve) => setTimeout(resolve, 2));
+    this.active += 1;
+    this.maxConcurrent = Math.max(this.maxConcurrent, this.active);
+    try {
+      const wait = this.varyDelay ? (call % 3) * 3 : this.delayMs;
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      if (!chunk) return { status: 'ok', data: new DataView(new ArrayBuffer(0)) };
+      return {
+        status: 'ok',
+        data: new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength),
+      };
+    } finally {
+      this.active -= 1;
+    }
   }
 }
 
 async function main(): Promise<void> {
+  const nodeProc = (globalThis as {
+    process?: { on?: (event: string, cb: (e: unknown) => void) => void };
+  }).process;
+  nodeProc?.on?.('unhandledRejection', (e) => { console.error('UNHANDLED', e); });
+
   // ---- command framing ----------------------------------------------------
   const ping = vllogicBuildCommand(UhsifCmd.Ping, 0);
   const pingView = new DataView(ping.buffer);
@@ -241,6 +262,7 @@ async function main(): Promise<void> {
     );
     for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
     await device.stop();
+    for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
     const commands = fake.commands.map((c) => c.cmd);
     const expected = [
       UhsifCmd.Stop, UhsifCmd.Flush, UhsifCmd.MaxPayload, UhsifCmd.ChannelMask,
@@ -256,6 +278,88 @@ async function main(): Promise<void> {
         store.sampleAt(0, 0) === (payload[1]! & 1) &&
         store.sampleAt(19, 31) === ((payload[19]! >>> 31) & 1),
       `ended=${ended} length=${store.length} commits=${commits} commands=${commands.length}`,
+    );
+  }
+
+  // ---- pipelined reads ---------------------------------------------------
+  {
+    const overridden = vllogicReadTuning('?vllogic-read=131072&vllogic-depth=4');
+    const rejected = vllogicReadTuning('?vllogic-read=1&vllogic-depth=999');
+    const defaults = vllogicReadTuning('');
+    check(
+      'read tuning honours safe overrides, rejects unsafe values and defaults to 256 KiB x 8',
+      overridden.bytes === 131072 && overridden.depth === 4 &&
+        rejected.bytes === 256 * 1024 && rejected.depth === 8 &&
+        defaults.bytes === 256 * 1024 && defaults.depth === 8,
+      `override=${JSON.stringify(overridden)} rejected=${JSON.stringify(rejected)} ` +
+        `defaults=${JSON.stringify(defaults)}`,
+    );
+  }
+
+  {
+    const fake = new FakeUsb();
+    const tuned = await VllogicDevice.open(fake as unknown as USBDevice, { depth: 3, bytes: 8192 });
+    check(
+      'open() accepts an explicit read geometry for bench runs',
+      tuned.readTuning.depth === 3 && tuned.readTuning.bytes === 8192,
+      `depth=${tuned.readTuning.depth} bytes=${tuned.readTuning.bytes}`,
+    );
+  }
+
+  {
+    const fake = new FakeUsb();
+    fake.varyDelay = true;
+    const perBlock = 8; // 32 payload words = 128 B, above UHSIF_PAY_MIN
+    const blocks = 16;
+    const words: number[] = [];
+    for (let i = 0; i < blocks; i++) {
+      const payload: number[] = [];
+      for (let s = 0; s < perBlock; s++) {
+        const word = (((i * perBlock + s) * 0x9E3779B1) ^ 0xA5A5A5A5) >>> 0;
+        words.push(word);
+        payload.push(word, word, word, word);
+      }
+      fake.chunks.push(block(0xF, 120, i, payload));
+    }
+    const device = await VllogicDevice.open(fake as unknown as USBDevice);
+    const store = new PlanarSampleStore({ channelCount: 4, samplerate: 20e6 });
+    let ended = false;
+    await device.startChannelMajor(
+      { channels: 4, samplerate: 20e6, thresholdVolts: 1.65 },
+      {
+        begin: (channels) => store.beginFrame(channels),
+        channel: (channel, start, wordsOfChannel) =>
+          store.appendChannel(channel, start, wordsOfChannel),
+        commit: (samples) => store.commitSamples(samples),
+      },
+      undefined,
+      { deviceSampleLimit: blocks * perBlock * 32, onEnd: () => { ended = true; } },
+    );
+    for (let i = 0; i < 400 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+    await device.stop();
+    for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+    const samples = blocks * perBlock * 32;
+    const ordered = store.length >= samples && words.every((word, i) =>
+      store.sampleAt(0, i * 32) === (word & 1) &&
+      store.sampleAt(0, i * 32 + 31) === ((word >>> 31) & 1));
+    if (!ordered) {
+      const bad = words.findIndex((word, i) =>
+        store.sampleAt(0, i * 32) !== (word & 1) ||
+        store.sampleAt(0, i * 32 + 31) !== ((word >>> 31) & 1));
+      const dump = [bad - 1, bad, bad + 1].map((i) => {
+        let got = 0;
+        for (let b = 0; b < 32; b++) got = (got | (store.sampleAt(0, i * 32 + b) << b)) >>> 0;
+        return `${i}:${got.toString(16)}/${words[i]!.toString(16)}`;
+      });
+      console.error('ORDER bad', bad, dump.join(' '),
+        'len', store.length, 'ended', ended);
+    }
+    check(
+      'pipelined reads keep endpoint order under out-of-order completions',
+      ended && fake.maxConcurrent >= 2 && store.length === samples && ordered,
+      `ended=${ended} concurrent=${fake.maxConcurrent} length=${store.length}/${samples} ` +
+        `ordered=${ordered} transfers=${device.readStats.transfers} ` +
+        `bytes=${device.readStats.bytes} peak=${device.readStats.peakInFlight}`,
     );
   }
 

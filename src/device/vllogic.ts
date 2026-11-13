@@ -11,9 +11,12 @@
  * devices use.
  *
  * The transport runs on the page thread for now. The device is 5 Gbit/s and a 20-lane
- * 160 MHz capture is 400 MB/s; the receive loop is deliberately a single transferIn at
- * a time so backpressure is explicit, and the default VLLogic profile recommends
- * 100 MHz (250 MB/s) until the worker split lands.
+ * 160 MHz capture is 400 MB/s. Reads are pipelined instead of serial: the endpoint
+ * always has `depth` transferIn calls outstanding, so a completed buffer is consumed
+ * while the next reads are already queued. The geometry follows libsigrok's vllogic
+ * driver, whose receive ring is 16 x 256 KiB (vllogic.h:34-35); WebUSB cannot express
+ * an URB ring, but the same "always keep reads queued" rule is what keeps the device's
+ * FIFO draining. See `vllogicReadTuning()` for the bring-up overrides.
  */
 
 import { DiagnosticError } from '../diagnostics.js';
@@ -37,10 +40,58 @@ import {
   type VllogicChannelMap,
 } from './vllogicProtocol.js';
 
-/** One read at a time; 64 KiB is far below Chromium's 32 MiB transferIn cap. */
-const READ_BYTES = 64 * 1024;
+/**
+ * Read geometry. libsigrok's vllogic driver keeps 16 x 256 KiB IN URBs in flight
+ * (libsigrok/src/hardware/vllogic-logic/vllogic.h:34-35). WebUSB has no URB ring, but
+ * the rule is the same: the endpoint must always have a read queued, or the device's
+ * FIFO backs up and the whole capture stretches. 8 x 256 KiB = 2 MiB in flight is the
+ * browser equivalent for the page-thread consumer; override it for bring-up with
+ * `?vllogic-read=<bytes>&vllogic-depth=<n>` and compare `[vllogic]` output.
+ */
+const DEFAULT_READ_BYTES = 256 * 1024;
+const DEFAULT_READ_DEPTH = 8;
+const MAX_READ_BYTES = 4 * 1024 * 1024;
+const MAX_READ_DEPTH = 32;
 const CONFIG_SETTLE_MS = 35;
 const STOP_SETTLE_MS = 750;
+
+/** How many reads are kept queued and how large each one is. */
+export interface VllogicReadTuning {
+  readonly bytes: number;
+  readonly depth: number;
+}
+
+/**
+ * Resolve the read geometry, honouring the bring-up query parameters. Values outside
+ * the safe range fall back to the defaults rather than silently starving the endpoint.
+ */
+export function vllogicReadTuning(search?: string): VllogicReadTuning {
+  const defaults: VllogicReadTuning = { bytes: DEFAULT_READ_BYTES, depth: DEFAULT_READ_DEPTH };
+  let raw = search;
+  if (raw === undefined) raw = typeof location === 'undefined' ? '' : location.search;
+  try {
+    const params = new URLSearchParams(raw);
+    const bytes = Number(params.get('vllogic-read'));
+    const depth = Number(params.get('vllogic-depth'));
+    return {
+      bytes: Number.isInteger(bytes) && bytes >= 4096 && bytes <= MAX_READ_BYTES
+        ? bytes : defaults.bytes,
+      depth: Number.isInteger(depth) && depth >= 1 && depth <= MAX_READ_DEPTH
+        ? depth : defaults.depth,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+interface CompletedRead {
+  readonly sequence: number;
+  readonly result?: USBInTransferResult;
+  readonly error?: unknown;
+  readonly bytes: number;
+  readonly startedAt: number;
+  readonly completedAt: number;
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,13 +134,28 @@ export class VllogicDevice implements Device {
   private onCaptureEnd: (() => void) | null = null;
   private ended = false;
 
-  private constructor(private readonly usb: USBDevice) {
+  /** Pipelined read geometry; see vllogicReadTuning(). */
+  readonly readTuning: VllogicReadTuning;
+  /** Receive-loop counters, reported once per capture. */
+  readonly readStats = {
+    transfers: 0,
+    bytes: 0,
+    shortReads: 0,
+    sumTransferMs: 0,
+    maxTransferMs: 0,
+    peakInFlight: 0,
+    startedAt: 0,
+    reported: false,
+  };
+
+  private constructor(private readonly usb: USBDevice, tuning?: VllogicReadTuning) {
     this.name = usb.productName || 'Logic20';
     this.serial = usb.serialNumber ?? '';
+    this.readTuning = tuning ?? vllogicReadTuning();
   }
 
   /** Open and claim interface 0. Interface 1 is the DLDO interface and is never touched. */
-  static async open(usb: USBDevice): Promise<VllogicDevice> {
+  static async open(usb: USBDevice, tuning?: VllogicReadTuning): Promise<VllogicDevice> {
     try {
       if (!usb.opened) await usb.open();
       // The device is normally already configured by the OS; a second select is a
@@ -103,7 +169,7 @@ export class VllogicDevice implements Device {
     } catch (e) {
       throw new DiagnosticError('device.claimFailed', undefined, String((e as Error)?.message ?? e));
     }
-    return new VllogicDevice(usb);
+    return new VllogicDevice(usb, tuning);
   }
 
   /**
@@ -204,6 +270,13 @@ export class VllogicDevice implements Device {
     const map = this.map;
     const sink = this.sink;
     if (!map || !sink || snapshots <= 0) return;
+    // Pipelined reads can deliver buffers that straddle the sample limit. Keep whole
+    // snapshots only, so the sink still commits a 32-sample multiple.
+    if (this.targetSamples > 0) {
+      const remaining = this.targetSamples - this.emittedSamples;
+      if (remaining <= 0) return;
+      snapshots = Math.min(snapshots, Math.ceil(remaining / 32));
+    }
     const start = this.emittedSamples;
     const samples = snapshots * 32;
     sink.begin?.(map.logical);
@@ -223,32 +296,152 @@ export class VllogicDevice implements Device {
     }
   }
 
+  /**
+   * Pipelined receive loop.
+   *
+   * `depth` `transferIn` calls stay outstanding at all times. A completion is first
+   * recorded by sequence number and its replacement is armed *before* the consumer
+   * runs, so parsing/writing a buffer can never leave the endpoint without a read.
+   * Completions are consumed strictly in submission order: the USB endpoint delivers
+   * bytes in order, but promise reactions are not required to, and the UHSIF parser is
+   * stateful across buffers.
+   *
+   * This is the WebUSB form of libsigrok's 16 x 256 KiB URB ring (vllogic.h:34-35).
+   */
   private async readLoop(): Promise<void> {
-    let failure: unknown = null;
+    const { bytes: readBytes, depth } = this.readTuning;
+    const stats = this.readStats;
+    stats.transfers = 0;
+    stats.bytes = 0;
+    stats.shortReads = 0;
+    stats.sumTransferMs = 0;
+    stats.maxTransferMs = 0;
+    stats.peakInFlight = 0;
+    stats.startedAt = performance.now();
+    stats.reported = false;
+
+    const completed = new Map<number, CompletedRead>();
+    const inFlight = new Set<Promise<void>>();
+    let nextSequence = 0;
+    let submitted = 0;
+    let wake: (() => void) | null = null;
+    let failure: unknown;
+    let closed = false;
+
+    const notify = (): void => {
+      const resume = wake;
+      wake = null;
+      resume?.();
+    };
+    const wantsMore = (): boolean => this.running &&
+      (this.targetSamples === 0 || this.emittedSamples < this.targetSamples);
+
+    const arm = (): void => {
+      if (closed || inFlight.size >= depth || !wantsMore()) return;
+      const sequence = submitted++;
+      const startedAt = performance.now();
+      stats.transfers += 1;
+      let request: Promise<USBInTransferResult>;
+      try {
+        request = this.usb.transferIn(VLLOGIC_EP_IN, readBytes);
+      } catch (error) {
+        completed.set(sequence, {
+          sequence, error, bytes: 0, startedAt, completedAt: performance.now(),
+        });
+        notify();
+        return;
+      }
+      let task!: Promise<void>;
+      task = request.then(
+        (result) => {
+          inFlight.delete(task);
+          const completedAt = performance.now();
+          const bytes = result.status === 'ok' && result.data ? result.data.byteLength : 0;
+          stats.bytes += bytes;
+          if (bytes > 0 && bytes < readBytes) stats.shortReads += 1;
+          stats.sumTransferMs += completedAt - startedAt;
+          stats.maxTransferMs = Math.max(stats.maxTransferMs, completedAt - startedAt);
+          stats.peakInFlight = Math.max(stats.peakInFlight, inFlight.size + 1);
+          completed.set(sequence, {
+            sequence, result, bytes, startedAt, completedAt,
+          });
+          // Refill before notifying: the consumer must never be the reason the
+          // endpoint sits idle.
+          arm();
+          notify();
+        },
+        (error) => {
+          inFlight.delete(task);
+          completed.set(sequence, {
+            sequence, error, bytes: 0, startedAt, completedAt: performance.now(),
+          });
+          notify();
+        },
+      );
+      inFlight.add(task);
+    };
+
+    for (let i = 0; i < depth; i++) arm();
+
     try {
-      while (this.running) {
-        const result = await this.usb.transferIn(VLLOGIC_EP_IN, READ_BYTES);
-        if (result.status !== 'ok') {
-          throw new DiagnosticError('device.bulkStatus', { status: result.status });
+      for (;;) {
+        while (!completed.has(nextSequence)) {
+          if (inFlight.size === 0) break;
+          await new Promise<void>((resolve) => { wake = resolve; });
+        }
+        const item = completed.get(nextSequence);
+        if (!item) break;
+        completed.delete(nextSequence++);
+        if (item.error !== undefined) throw item.error;
+        const result = item.result;
+        if (!result || result.status !== 'ok') {
+          // A forced stop can surface as a stalled/short completion; that is the
+          // teardown path, not a capture failure.
+          if (this.stopRequested || !this.running) break;
+          throw new DiagnosticError('device.bulkStatus', { status: result?.status ?? 'none' });
         }
         const data = result.data;
-        if (!data || data.byteLength === 0) continue;
-        this.parser?.feed(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-        if (this.targetSamples > 0 && this.emittedSamples >= this.targetSamples) break;
+        if (data && data.byteLength > 0) {
+          this.parser?.feed(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+        }
+        if (!this.running && inFlight.size === 0 && completed.size === 0) break;
       }
     } catch (e) {
       if (!this.stopRequested) failure = e;
     } finally {
+      closed = true;
       this.running = false;
+      // The device has been (or is being) stopped, so outstanding reads complete as
+      // short reads. Bound the wait: a wedged board must not keep the loop alive.
+      await Promise.race([Promise.allSettled([...inFlight]), delay(STOP_SETTLE_MS)]);
       this.parser?.finish();
-      if (this.targetSamples > 0 && this.emittedSamples >= this.targetSamples) {
+      this.reportReadStats();
+      if (failure === undefined && this.targetSamples > 0 &&
+          this.emittedSamples >= this.targetSamples) {
         this.endOnce();
       }
     }
-    if (failure) {
+    if (failure !== undefined) {
       this.onError?.(failure);
       throw failure;
     }
+  }
+
+  /** One line per capture, so a slow run can be attributed without a profiler. */
+  private reportReadStats(): void {
+    const stats = this.readStats;
+    if (stats.reported || stats.transfers === 0 || typeof location === 'undefined') return;
+    stats.reported = true;
+    const ms = performance.now() - stats.startedAt;
+    const mb = stats.bytes / 1e6;
+    const mbPerSecond = ms > 0 ? (mb / ms) * 1000 : 0;
+    console.info(
+      `[vllogic] ${stats.transfers} reads of ${(this.readTuning.bytes / 1024).toFixed(0)} KiB, ` +
+      `${mb.toFixed(1)} MB in ${ms.toFixed(0)} ms (${mbPerSecond.toFixed(1)} MB/s), ` +
+      `avg ${(stats.sumTransferMs / stats.transfers).toFixed(2)} ms, ` +
+      `max ${stats.maxTransferMs.toFixed(1)} ms, short ${stats.shortReads}, ` +
+      `inflight peak ${stats.peakInFlight}/${this.readTuning.depth}`,
+    );
   }
 
   private endOnce(): void {
