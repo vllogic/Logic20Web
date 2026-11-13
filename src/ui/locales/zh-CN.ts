@@ -12,7 +12,7 @@ import type { Messages } from './en.js';
 
 export const zhCN: Messages = {
   // ------------------------------------------------------------ document
-  'app.title': 'SLogic 逻辑分析仪',
+  'app.title': 'Logic20 逻辑分析仪',
 
   // ------------------------------------------------------------- toolbar
   'toolbar.device': '设备',
@@ -849,8 +849,8 @@ export const zhCN: Messages = {
   'theme.system': '跟随系统',
 
   // ------------------------------------------------- app update (PWA shell)
-  'update.ready': '新版本已就绪，刷新启用。',
-  'update.reload': '刷新',
+  'update.ready': '发现新版本，升级后生效。',
+  'update.reload': '升级',
   'update.later': '稍后',
 };
 

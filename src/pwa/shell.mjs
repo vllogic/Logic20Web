@@ -30,8 +30,8 @@ export const ICONS = ['icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 
 export function webManifest() {
   return `${JSON.stringify({
-    name: 'SLogic Logic Analyzer',
-    short_name: 'SLogic',
+    name: 'Logic20 Logic Analyzer',
+    short_name: 'Logic20',
     id: './',
     start_url: './',
     scope: './',

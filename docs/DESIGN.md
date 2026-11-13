@@ -612,8 +612,9 @@ plain links to the source repository, LICENSE and NOTICE.md.
 The update state
 comes from `getUpdateState()` / `onUpdateStateChange()` / `applyUpdate()` in
 `src/ui/pwaUpdate.ts` (`off` without a service worker, `idle`, `ready`). A waiting version
-also shows a notice under the platform notice — "A new version is ready. Reload to use it."
-with Reload and Later; Later hides it for this page load, the state stays `ready`.
+also shows a fixed top-right card — "A new version is ready." — with Update and Later;
+Later hides it for this page load, the state stays `ready`. Update activates the waiting
+worker and reloads once it controls the page.
 
 - One panel at a time; one presenter. The panel switcher opens it; the same control closes
   it. A collapsed panel leaves a full-height 24 px reopen strip at the right edge (in flow,

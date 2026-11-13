@@ -15,10 +15,11 @@
  *   locale catalogs, the decoder detail chunk, favicon, icons and the web manifest. Stored
  *   in `<prefix>shell-<version>`; activation deletes every other shell version of this
  *   scope, so at most one shell is kept (two while an update waits).
- * - index.html is network-first: a fresh copy is served when the network answers within
- *   NAV_TIMEOUT_MS, otherwise the precached copy. The network copy is NEVER written to the
- *   cache - a newer index.html refers to chunk names the current shell does not hold, so
- *   only the copy fetched at install (checked against this version) is kept for offline.
+ * - index.html is cache-first: a reload serves the copy that belongs to the active shell,
+ *   so F5 is fast and works offline. The page checks for a new worker immediately after
+ *   registration; a new worker precaches a new index and waits for the user's Update
+ *   click, never swapping a running capture. A network copy is NEVER written to the
+ *   cache - it may refer to chunk names the current shell does not hold.
  * - Every other shell file has a content-hashed name (or is tiny and versioned by the
  *   shell), so it is cache-first.
  * - Runtime (Pyodide directory + decoders zip, ~14 MB, content-hashed): stored in the
@@ -45,7 +46,6 @@ const SCOPE = self.registration.scope;
 const PREFIX = `slogicweb:${SCOPE}:`;
 const SHELL_CACHE = `${PREFIX}shell-${VERSION}`;
 const RUNTIME_CACHE = `${PREFIX}runtime`;
-const NAV_TIMEOUT_MS = 4000;
 
 const abs = (rel) => new URL(rel, SCOPE).href;
 const INDEX_URL = abs(SHELL.index);
@@ -122,21 +122,15 @@ self.addEventListener('message', (event) => {
 });
 
 async function navigate(request) {
-  const cached = caches.open(SHELL_CACHE).then((cache) => cache.match(INDEX_URL));
-  const network = fetch(request);
-  network.catch(() => {}); // a late failure after the cache answered is not an error
-  const timeout = new Promise((resolve) => setTimeout(resolve, NAV_TIMEOUT_MS));
-  try {
-    const first = await Promise.race([network, timeout]);
-    // A CDN error page is a blip too: prefer the shell over a 5xx.
-    if (first && first.status < 500) return first;
-    // The network is slow or failing: answer from the shell if it can.
-    return (await cached) ?? first ?? (await network);
-  } catch {
-    const fallback = await cached;
-    if (fallback) return fallback;
-    throw new Error('offline and no cached shell');
-  }
+  // Cache-first is the whole point of the shell: F5 must paint the active version
+  // immediately, not wait for (or adopt) a newer document while the old chunks are
+  // still the ones in this shell. A new version arrives only through a new worker
+  // and the explicit Update click.
+  const cache = await caches.open(SHELL_CACHE);
+  const cached = await cache.match(INDEX_URL);
+  if (cached) return cached;
+  // First visit (nothing installed yet): there is no shell to serve.
+  return fetch(request);
 }
 
 /** `key` is the URL without its query: the build names files, not queries. */

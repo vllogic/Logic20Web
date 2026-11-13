@@ -822,9 +822,12 @@ Key transitions (the full table is generated in one pure module):
   - Install fetches `index.html` with `cache: 'reload'` and a version query, and refuses a
     copy without the matching stamp (a stale CDN copy fails the install; it retries later).
     Hashed files are reused from any older cache, else fetched normally.
-  - `index.html` is network-first with a 4 s timeout and 5xx fallback to the install-time
-    copy; the network copy is never stored. Listed shell files are cache-first. Cross-origin,
-    non-GET, range and unlisted requests (e.g. `/ota/`) pass through untouched.
+  - `index.html` is cache-first from the active shell, so F5 paints the current version
+    immediately and works offline. The page calls `registration.update()` right after
+    registration (and hourly while visible); a new worker installs in the background and
+    waits for the explicit Update click. The network copy is never stored. Listed shell
+    files are cache-first. Cross-origin, non-GET, range and unlisted requests pass through
+    untouched.
   - Pyodide/decoders (~14 MB): filled **best effort at install** while App warms the decode
     worker at boot (the page downloads those bytes on its first visit anyway, and the HTTP
     cache answers the fill), and otherwise cached on first use. A failed fill never fails

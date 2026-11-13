@@ -2744,9 +2744,22 @@ html[data-theme="light"] .bus-dialog::backdrop { background: var(--backdrop); }
 
 /* ------------------------------------------------- app update + boot progress */
 
-/* A waiting new version (src/ui/pwaUpdate.ts): the platform notice's neutral surface,
-   with the reload as the one primary action. Never auto-reloads. */
-.update-notice { align-items: center; }
+/* A waiting new version (src/ui/pwaUpdate.ts): a fixed top-right card, with the
+   update as the one primary action. Never auto-reloads. */
+.update-notice {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  width: min(420px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.28);
+  align-items: center;
+}
 .update-notice-reload, .update-notice-later {
   flex: none;
   min-height: 24px;

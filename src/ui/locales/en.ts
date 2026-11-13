@@ -18,7 +18,7 @@
 
 export const en = {
   // ------------------------------------------------------------ document
-  'app.title': 'SLogic Logic Analyzer',
+  'app.title': 'Logic20 Logic Analyzer',
 
   // ------------------------------------------------------------- toolbar
   'toolbar.device': 'Device',
@@ -904,8 +904,8 @@ export const en = {
   'theme.system': 'System',
 
   // ------------------------------------------------- app update (PWA shell)
-  'update.ready': 'A new version is ready. Reload to use it.',
-  'update.reload': 'Reload',
+  'update.ready': 'A new version is ready.',
+  'update.reload': 'Update',
   'update.later': 'Later',
 };
 

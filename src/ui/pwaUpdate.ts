@@ -124,7 +124,9 @@ export function initServiceWorker(): void {
     secureContext: window.isSecureContext,
     protocol: location.protocol,
   })) return;
-  navigator.serviceWorker.register('./sw.js').then((reg) => {
+  // `updateViaCache: 'none'` keeps the browser from answering the worker check
+  // from its HTTP cache; the server sends sw.js no-cache, but a proxy may not.
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((reg) => {
     setState('idle');
     // Only an UPDATE waits: with no controller this is the first install, nothing to swap.
     if (reg.waiting && navigator.serviceWorker.controller) markWaiting(reg.waiting);
@@ -135,11 +137,22 @@ export function initServiceWorker(): void {
       });
     });
     let lastCheck = Date.now();
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'visible' || Date.now() - lastCheck < UPDATE_CHECK_MS) return;
+    const check = (): void => {
       lastCheck = Date.now();
       reg.update().catch(() => { /* offline: try again next time */ });
+    };
+    // A reload serves the cached shell; this is the remote-version check that runs
+    // immediately afterwards. The new worker installs in the background and waits
+    // for the user's Update click; it never swaps a running capture.
+    check();
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') check();
+    }, UPDATE_CHECK_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || Date.now() - lastCheck < UPDATE_CHECK_MS) return;
+      check();
     });
+    window.addEventListener('pagehide', () => clearInterval(interval), { once: true });
   }).catch((e: unknown) => {
     console.warn('[slogicweb] service worker registration failed', e);
   });

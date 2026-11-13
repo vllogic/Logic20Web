@@ -58,7 +58,7 @@ function check(name: string, pass: boolean, detail = ''): void {
 
 const SYNTHETIC: Record<string, string> = {
   'index.html': '<!doctype html><html><head><meta charset="utf-8" />\n' +
-    '  <title data-i18n="app.title">SLogic Logic Analyzer</title>\n</head><body></body></html>',
+    '  <title data-i18n="app.title">Logic20 Logic Analyzer</title>\n</head><body></body></html>',
   'assets/index-AAAAAAAA.js': 'entry',
   'assets/index-AAAAAAAA.js.map': '{}',
   'assets/index-BBBBBBBB.css': 'css',
@@ -105,7 +105,7 @@ try {
     icons: { src: string; purpose: string; sizes: string }[];
   };
   check('manifest: name, start_url, standalone, app colours',
-    manifest.name === 'SLogic Logic Analyzer' && manifest.short_name === 'SLogic' &&
+    manifest.name === 'Logic20 Logic Analyzer' && manifest.short_name === 'Logic20' &&
       manifest.start_url === './' && manifest.scope === './' && manifest.display === 'standalone' &&
       manifest.theme_color === THEME_COLOR && manifest.background_color === THEME_COLOR &&
       THEME_COLOR === '#1B1B1C',
@@ -190,11 +190,12 @@ try {
       s.includes('if (url.origin !== self.location.origin) return;') &&
       s.includes("response.type === 'basic'") && s.includes('!response.redirected'),
     'cross-origin and non-GET pass through');
-  check('sw: index.html is network-first with timeout and never stores the network copy',
-    navigateBody.includes('Promise.race([network, timeout])') && !navigateBody.includes('.put(') &&
-      navigateBody.includes('first.status < 500') && s.includes("cache: 'reload'") &&
+  check('sw: index.html is cache-first and never stores the network copy',
+    navigateBody.includes('cache.match(INDEX_URL)') &&
+      navigateBody.includes('if (cached) return cached') && !navigateBody.includes('.put(') &&
+      !navigateBody.includes('Promise.race') && s.includes("cache: 'reload'") &&
       s.includes('if (bare === SCOPE || bare === INDEX_URL) event.respondWith(navigate(request));'),
-    'only the install-time copy (checked against VERSION) serves offline');
+    'the install-time copy (checked against VERSION) serves the reload');
 }
 
 // ------------------------------------------------------------- registration
@@ -220,7 +221,7 @@ try {
       config.includes('__SLOGICWEB_PWA__: JSON.stringify(enabled)') &&
       /inlineEntryForFileOpen\(\), hostedWorkerFiles\(\), pwaShell\(\),/.test(config) &&
       update.includes('if (!__SLOGICWEB_PWA__) return;') &&
-      update.includes("navigator.serviceWorker.register('./sw.js')"),
+      update.includes("navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })"),
     'pwaShell runs after the inline step');
 
   const main = fs.readFileSync('src/ui/main.ts', 'utf8');
@@ -238,7 +239,8 @@ try {
   const missing = Object.entries(catalogs).flatMap(([name, c]) =>
     (['update.ready', 'update.reload', 'update.later'] as const).filter((k) => !c[k]).map((k) => `${name}:${k}`));
   check('update notice: localized in four locales',
-    missing.length === 0 && zhCN['update.ready'] === '新版本已就绪，刷新启用。',
+    missing.length === 0 && zhCN['update.ready'] === '发现新版本，升级后生效。' &&
+      zhCN['update.reload'] === '升级',
     missing.join(', ') || en['update.ready']);
 }
 

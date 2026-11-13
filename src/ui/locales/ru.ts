@@ -14,7 +14,7 @@ import type { Messages } from './en.js';
 
 export const ru: Messages = {
   // ------------------------------------------------------------ document
-  'app.title': 'Логический анализатор SLogic',
+  'app.title': 'Логический анализатор Logic20',
 
   // ------------------------------------------------------------- toolbar
   'toolbar.device': 'Устройство',
@@ -894,8 +894,8 @@ export const ru: Messages = {
   'theme.system': 'Системная',
 
   // ------------------------------------------------- app update (PWA shell)
-  'update.ready': 'Новая версия готова. Перезагрузите страницу, чтобы её включить.',
-  'update.reload': 'Перезагрузить',
+  'update.ready': 'Доступна новая версия.',
+  'update.reload': 'Обновить',
   'update.later': 'Позже',
 };
 
