@@ -81,7 +81,7 @@ function aboutPane(settingsWindow: string, app: string, about: string): boolean 
 {
   const view = aboutView({ version: '1.2.3', hash: 'abc1234' });
   check('the About view names the app, version and build, the GPL line and the copyright',
-    view.name === 'slogicweb' && view.subtitle === en['app.title'] &&
+    view.name === 'logic20web' && view.subtitle === en['app.title'] &&
       view.version === 'Version 1.2.3 · build abc1234' &&
       view.license === 'GPL-3.0-or-later · no warranty' &&
       view.copyright === '© 2026 Sipeed Co., Ltd.' && COPYRIGHT === view.copyright &&
