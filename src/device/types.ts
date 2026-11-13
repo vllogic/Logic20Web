@@ -64,6 +64,21 @@ export interface CaptureStartOptions {
 export type SampleSink = (chunk: Uint8Array) => void | Promise<void>;
 
 /**
+ * Channel-major delivery used by devices whose wire payload is one channel's 32-sample
+ * word at a time (VLLogic Logic20). The sink owns no sample layout: `channel()` writes
+ * the words into that channel's plane, and `commit()` publishes the snapshot only after
+ * every channel has arrived, so the UI never sees a partially updated frame.
+ */
+export interface ChannelSampleSink {
+  /** Declare the channels in the next snapshot (called once per snapshot). */
+  begin?(channels: readonly number[]): void;
+  /** One channel's words; `words[i]` holds samples 32i..32i+31, bit 0 first. */
+  channel(channel: number, startSample: number, words: Uint32Array): void;
+  /** Publish the snapshot after every channel has been written. */
+  commit(samples: number): void;
+}
+
+/**
  * Reports a mid-capture dropout: `samplePosition` samples were delivered
  * before the device failed to fill a transfer and `missingSamples` were lost.
  * The stream continues afterwards, so every sample position at or past the
@@ -96,8 +111,18 @@ export class TransportDeadError extends DiagnosticError {
 export interface Device {
   readonly name: string;
   readonly serial: string;
+  /**
+   * The transport's natural sample order. `interleaved` (the default) hands the sink
+   * one sample-major chunk; `channel-major` waits for the consumer to call
+   * startChannelMajor() instead. Omitting it keeps older third-party devices working.
+   */
+  readonly sampleLayout?: 'interleaved' | 'channel-major';
+  /** Voltage interval a device accepts for its comparator, when it is not the U3 DAC. */
+  readonly thresholdRange?: { readonly min: number; readonly max: number };
   /** Capability envelope exposed to the UI; absent for third-party devices. */
   readonly maxChannels?: number;
+  /** Discrete rates the device accepts; absent means the SLogic U3 table. */
+  readonly sampleratesHz?: readonly number[];
   readonly maxSamplerateHz?: Readonly<Record<number, number>>;
   /**
    * Per-width default rate where the profile has measured the ceiling as offered but not
@@ -109,6 +134,16 @@ export interface Device {
   usbControl?(command: string): Promise<string>;
   start(
     cfg: CaptureConfig, sink: SampleSink, onDropout?: DropoutSink,
+    options?: CaptureStartOptions,
+  ): Promise<void>;
+  /**
+   * Channel-major variant of start(), used when `sampleLayout === 'channel-major'`.
+   * The transport delivers each snapshot as one word per enabled channel and the
+   * consumer commits it as a unit. `deviceSampleLimit`/`onEnd` keep the same meaning
+   * as in start(); software trigger and loop capture are not supported yet.
+   */
+  startChannelMajor?(
+    cfg: CaptureConfig, sink: ChannelSampleSink, onDropout?: DropoutSink,
     options?: CaptureStartOptions,
   ): Promise<void>;
   /**

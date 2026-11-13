@@ -22,6 +22,7 @@ import {
   PROFILES,
   SLOGIC16U3_PROFILE,
   SLOGIC32U3_PROFILE,
+  VLLOGIC_PROFILE,
   capabilityReason,
   maxSamplerateFor,
   profileForVidPid,
@@ -114,9 +115,11 @@ check(
 }
 
 check(
-  'shipped profiles declare the IN endpoint and no OUT endpoint (null, not 0)',
-  PROFILES.every((profile) =>
-    profile.link.endpoints.in === EP_IN && profile.link.endpoints.out === null),
+  'U3 profiles declare the IN endpoint and no OUT endpoint; Logic20 declares both',
+  PROFILES.filter((profile) => profile.vid === USB_VID_SIPEED).every((profile) =>
+    profile.link.endpoints.in === EP_IN && profile.link.endpoints.out === null) &&
+    VLLOGIC_PROFILE.link.endpoints.in === 0x81 &&
+    VLLOGIC_PROFILE.link.endpoints.out === 0x01,
   PROFILES
     .map((profile) =>
       `${profile.id}: in=${profile.link.endpoints.in} out=${String(profile.link.endpoints.out)}`)

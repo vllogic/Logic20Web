@@ -46,6 +46,14 @@ import {
   USB_VID_SIPEED,
 } from './protocol.js';
 import type { AnalogGroup, DeviceProfile, LinkRate, RateTier } from './profileTypes.js';
+import {
+  VLLOGIC_EP_IN_ADDR,
+  VLLOGIC_EP_OUT_ADDR,
+  VLLOGIC_NUM_CHANNELS,
+  VLLOGIC_PID,
+  VLLOGIC_RATES,
+  VLLOGIC_VID,
+} from './vllogicProtocol.js';
 
 /**
  * Chromium's per-call WebUSB transfer ceiling. The transport's private
@@ -360,8 +368,80 @@ export const SLOGIC32U3_PROFILE: DeviceProfile = {
   ],
 };
 
+/**
+ * VLLogic Logic20 (UHSIF v2.2). Its payload is channel-major, so the UI selects the
+ * planar store and the transport delivers one channel at a time.
+ *
+ * The 20-lane 160 MHz ceiling is the 400 MB/s SuperSpeed load the libsigrok driver
+ * admits (20 * 160 / 8 = 400 MB/s). 16 lanes reach 200 MHz and 4 lanes 800 MHz by the
+ * same arithmetic. 100 MHz is the recommended 20-lane default: 250 MB/s leaves the page
+ * thread headroom while the worker split is still pending.
+ */
+const VLLOGIC_LINK_RATES = ['ss5'] as const;
+const VLLOGIC_THRESHOLDS = [
+  -2.5, -2, -1.5, -1, -0.5, 0, 0.5, 1, 1.65, 2, 2.5, 3.3, 5,
+] as const;
+
+export const VLLOGIC_PROFILE: DeviceProfile = {
+  id: 'vllogic-logic20',
+  name: 'Logic20',
+  vid: VLLOGIC_VID,
+  pid: VLLOGIC_PID,
+  serial: { required: false },
+  link: {
+    interfaceClass: 0xff,
+    endpoints: { in: VLLOGIC_EP_IN_ADDR, out: VLLOGIC_EP_OUT_ADDR },
+    maxTransferBytes: MAX_TRANSFER_BYTES,
+    rates: VLLOGIC_LINK_RATES,
+    probe: { bytes: 4096, bursts: 1 },
+  },
+  digital: {
+    maxChannels: VLLOGIC_NUM_CHANNELS,
+    groups: [{ start: 0, channels: VLLOGIC_NUM_CHANNELS }],
+    widths: [4, 8, 16, 20],
+    rates: [
+      rateTier(4, 800_000_000, VLLOGIC_LINK_RATES),
+      rateTier(8, 400_000_000, VLLOGIC_LINK_RATES),
+      rateTier(16, 200_000_000, VLLOGIC_LINK_RATES),
+      rateTier(20, 160_000_000, VLLOGIC_LINK_RATES),
+    ],
+    sampleratesHz: VLLOGIC_RATES.map((entry) => entry.rate),
+    thresholdVolts: VLLOGIC_THRESHOLDS,
+    testModes: [TEST_MODE_NORMAL],
+  },
+  analog: {
+    groups: [],
+    calibration: { id: 'no-analog', version: 0 },
+  },
+  trigger: {
+    // The transport currently captures untriggered data. Conditions are left empty so
+    // the UI does not offer a trigger the transport cannot honour.
+    execution: 'host',
+    digital: [],
+    analog: [],
+    mixed: false,
+    preTriggerMaxPercent: 0,
+    preTriggerMaxBytes: 1,
+  },
+  modes: { single: true, repeat: true, loop: false, record: true },
+  firmware: { min: '0' },
+  quirks: [
+    {
+      id: 'uhsif-v22-channel-major',
+      note: 'UHSIF v2.2 payload: one uint32 per enabled physical lane in ascending lane ' +
+        'order, 32 samples per word (bit 0 first). The host writes each word into that ' +
+        'channel\'s plane; no sample-major transpose is performed.',
+    },
+    {
+      id: 'adc-none',
+      note: 'The Logic20 has no ADC module; analog rows are unavailable.',
+    },
+  ],
+};
+
 /** Every profile this build can drive. */
 export const PROFILES: readonly DeviceProfile[] = [
   SLOGIC16U3_PROFILE,
   SLOGIC32U3_PROFILE,
+  VLLOGIC_PROFILE,
 ];

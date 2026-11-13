@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Sipeed Co., Ltd.
 import { PID_SLOGIC16_U3, PID_SLOGIC32_U3, USB_VID_SIPEED } from './protocol.js';
+import { VLLOGIC_PID, VLLOGIC_VID } from './vllogicProtocol.js';
 
 export const USB_FILTERS: USBDeviceFilter[] = [
   { vendorId: USB_VID_SIPEED, productId: PID_SLOGIC16_U3 },
   { vendorId: USB_VID_SIPEED, productId: PID_SLOGIC32_U3 },
+  { vendorId: VLLOGIC_VID, productId: VLLOGIC_PID },
 ];
 
 /**

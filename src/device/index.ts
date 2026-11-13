@@ -5,12 +5,17 @@ import { DiagnosticError } from '../diagnostics.js';
 import { PID_SLOGIC16_U3, PID_SLOGIC32_U3, USB_VID_SIPEED } from './protocol.js';
 import { USB_FILTERS } from './usbCore.js';
 import { workerTransport } from './workerTransport.js';
+import { VllogicDevice } from './vllogic.js';
+import { VLLOGIC_PID, VLLOGIC_VID } from './vllogicProtocol.js';
 
-export type { CaptureConfig, CaptureStartOptions, Device, SampleSink } from './types.js';
+export type {
+  CaptureConfig, CaptureStartOptions, ChannelSampleSink, Device, SampleSink,
+} from './types.js';
 export {
   PROFILES,
   SLOGIC16U3_PROFILE,
   SLOGIC32U3_PROFILE,
+  VLLOGIC_PROFILE,
   capabilityReason,
   maxSamplerateFor,
   profileForVidPid,
@@ -44,18 +49,31 @@ export {
   type SimStartConfig,
 } from './simDriver.js';
 export { WorkerSlogicDevice, workerTransport } from './workerTransport.js';
+export { VllogicDevice } from './vllogic.js';
 
 /**
  * Open the device the origin already has permission for, on the worker when it can and
  * on the page when it cannot. See `workerTransport`.
  */
+function isSupportedUsbDevice(device: USBDevice): boolean {
+  if (device.vendorId === VLLOGIC_VID && device.productId === VLLOGIC_PID) return true;
+  return device.vendorId === USB_VID_SIPEED &&
+    (device.productId === PID_SLOGIC16_U3 || device.productId === PID_SLOGIC32_U3);
+}
+
+async function openSupportedDevice(usb: USBDevice): Promise<Device> {
+  if (usb.vendorId === VLLOGIC_VID && usb.productId === VLLOGIC_PID) {
+    return VllogicDevice.open(usb);
+  }
+  return workerTransport.open(usb);
+}
+
 export async function getGrantedDevicesOnBestThread(): Promise<Device[]> {
   if (!navigator.usb) throw new DiagnosticError('usb.unavailable');
   const all = await navigator.usb.getDevices().catch(rethrowUsbFailure);
-  const mine = all.filter((d) => d.vendorId === USB_VID_SIPEED &&
-    (d.productId === PID_SLOGIC16_U3 || d.productId === PID_SLOGIC32_U3));
+  const mine = all.filter(isSupportedUsbDevice);
   const devices: Device[] = [];
-  for (const usb of mine) devices.push(await workerTransport.open(usb));
+  for (const usb of mine) devices.push(await openSupportedDevice(usb));
   return devices;
 }
 
@@ -67,7 +85,7 @@ export async function requestDeviceOnBestThread(): Promise<Device> {
   if (!navigator.usb) throw new DiagnosticError('usb.unavailable');
   const usb = await navigator.usb.requestDevice({ filters: USB_FILTERS })
     .catch(rethrowUsbFailure);
-  return workerTransport.open(usb);
+  return openSupportedDevice(usb);
 }
 
 function rethrowUsbFailure(error: unknown): never {

@@ -32,6 +32,7 @@ export {
   PROFILES,
   SLOGIC16U3_PROFILE,
   SLOGIC32U3_PROFILE,
+  VLLOGIC_PROFILE,
 } from './profiles.js';
 
 /** Link classes in ascending wire capacity; a slower link can never offer more. */
@@ -247,7 +248,7 @@ export function validateProfile(p: DeviceProfile): ProfileValidation {
   if (!isChannelCount(maxChannels as number)) {
     return fail(
       'digital-max-channels',
-      `digital.maxChannels must be one of 4, 8, 16, 32, 64, 128, got ${String(maxChannels)}`,
+      `digital.maxChannels must be one of 4, 8, 16, 20, 32, 64, 128, got ${String(maxChannels)}`,
     );
   }
   const max = maxChannels as ChannelCount;

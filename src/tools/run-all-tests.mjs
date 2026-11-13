@@ -30,6 +30,7 @@ const entries = [
   'src/device/emulationPatternTest.ts',
   'src/platform/capabilitiesSelftest.ts',
   'src/device/profileSelftest.ts',
+  'src/device/vllogicSelftest.ts',
   'src/device/simDriverSelftest.ts',
   'src/device/simDriverStoreIntegrationSelftest.ts',
   'src/data/signalStoreSelftest.ts',
