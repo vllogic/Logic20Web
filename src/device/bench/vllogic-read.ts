@@ -43,6 +43,12 @@ interface BenchResult extends BenchCase {
   peakInFlight: number;
   lineMBs: number;
   effMSa: number;
+  avgReadBytes: number;
+  inFlightKiB: number;
+  parser: {
+    payloadWords: number; junkBytes: number; crcFail: number; badLen: number;
+    maskMismatch: number; dropBlocks: number; seqJumps: number; partialSnapshots: number;
+  } | null;
   error?: string;
 }
 
@@ -212,7 +218,8 @@ async function runCase(bench: BenchCase): Promise<BenchResult> {
     ...bench, rate, channels, seconds, target,
     elapsedMs: 0, configMs: 0, ended: false, storeLength: 0, commits: 0, sinkMs: 0,
     transfers: 0, bytes: 0, shortReads: 0, avgTransferMs: 0, maxTransferMs: 0,
-    peakInFlight: 0, lineMBs: 0, effMSa: 0,
+    peakInFlight: 0, lineMBs: 0, effMSa: 0, avgReadBytes: 0, inFlightKiB: 0,
+    parser: null,
   };
 
   if (!usb) throw new Error('device is not connected');
@@ -259,6 +266,10 @@ async function runCase(bench: BenchCase): Promise<BenchResult> {
       peakInFlight: stats.peakInFlight,
       lineMBs: Number((stats.bytes / 1e6 / (elapsed / 1000)).toFixed(2)),
       effMSa: Number((store.length / 1e6 / (elapsed / 1000)).toFixed(2)),
+      avgReadBytes: stats.transfers > 0 ? Math.round(stats.bytes / stats.transfers) : 0,
+      inFlightKiB: stats.transfers > 0
+        ? Number(((bench.depth * (stats.bytes / stats.transfers)) / 1024).toFixed(0)) : 0,
+      parser: device.parserStats ? { ...device.parserStats } : null,
     };
   } finally {
     await device.stop().catch(() => undefined);
@@ -315,6 +326,9 @@ runButton.addEventListener('click', async () => {
         peakInFlight: 0,
         lineMBs: 0,
         effMSa: 0,
+        avgReadBytes: 0,
+        inFlightKiB: 0,
+        parser: null,
         error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
       };
       setStatus(`第 ${i + 1} 组失败：${result.error}`);
