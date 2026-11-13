@@ -153,7 +153,7 @@ export const en = {
 
   // -------------------------------------------------------- empty hint
   'emptyHint.line1': 'No capture loaded.',
-  'emptyHint.line2': 'Open a .sr or .lwcap file (or drag it here), or connect an SLogic16/32 U3.',
+  'emptyHint.line2': 'Open a .sr or .lwcap file (or drag it here), or connect a Logic20.',
   'emptyHint.line2Connected': 'Press Capture to record from {device}, or open a .sr or .lwcap file (or drag it here).',
   'emptyHint.line2NoUsb': 'Open a .sr or .lwcap file (or drag it here) to view and decode it.',
   'drop.overlay': 'Drop .sr / .lwcap to open',

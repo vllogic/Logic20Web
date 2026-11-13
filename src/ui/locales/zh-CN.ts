@@ -147,7 +147,7 @@ export const zhCN: Messages = {
 
   // -------------------------------------------------------- empty hint
   'emptyHint.line1': '尚未加载采集数据。',
-  'emptyHint.line2': '打开 .sr 或 .lwcap 文件，或拖拽文件到此处，或连接 SLogic16/32 U3。',
+  'emptyHint.line2': '打开 .sr 或 .lwcap 文件，或拖拽文件到此处，或连接 Logic20。',
   'emptyHint.line2Connected': '按“采集”从 {device} 记录数据，或打开 .sr 或 .lwcap 文件，或拖拽文件到此处。',
   'emptyHint.line2NoUsb': '打开 .sr 或 .lwcap 文件，或拖拽文件到此处，即可查看和解码。',
   'drop.overlay': '松开以打开 .sr / .lwcap 文件',
