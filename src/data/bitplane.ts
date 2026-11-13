@@ -107,6 +107,38 @@ export class BitPlane {
   }
 
   /**
+   * Write one word per 32 samples, LSB-first, starting at a 32-aligned bit index.
+   *
+   * This is the channel-major fast path: a device that sends `channel, 32 samples` as
+   * one uint32 can land its word in the plane without unpacking it into 32 setBit()
+   * calls. The caller must reserve the range first (`extendTo`), because only that step
+   * allocates blocks.
+   *
+   * `head` is advanced by dropFront() in multiples of 32, so a 32-aligned logical index
+   * remains word-aligned after the head is added. The guard is deliberate: silently
+   * shifting a word into the wrong bit positions would corrupt a channel without any
+   * later symptom.
+   */
+  writeWords(bitIndex: number, words: Uint32Array): void {
+    if (!Number.isInteger(bitIndex) || bitIndex < 0 || (bitIndex & 31) !== 0) {
+      throw new Error(`writeWords needs a non-negative 32-aligned bit index, got ${bitIndex}`);
+    }
+    if ((this.head & 31) !== 0) {
+      throw new Error(`writeWords needs a 32-aligned head, got ${this.head}`);
+    }
+    const end = bitIndex + words.length * 32;
+    this.reserve(end);
+    let r = bitIndex + this.head;
+    for (let i = 0; i < words.length; i++) {
+      const b = this.blocks[r >>> this.blockBitsLog];
+      if (b === undefined) throw new Error(`word ${i} out of range (bits=${this.bits})`);
+      b[(r & this.blockMask) >>> 5] = words[i]!;
+      r += 32;
+    }
+    if (end > this.bits) this.bits = end;
+  }
+
+  /**
    * HAS_ONE | HAS_ZERO over bits [a, b). O((b - a) / 32) words, and it returns the
    * instant both bits are known, which is the common case for any channel that is
    * actually toggling.

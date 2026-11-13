@@ -114,6 +114,17 @@ export class PlanarSampleStore implements SampleStore {
   private gapList: GapSpan[] = [];
 
   /**
+   * Channel-major frame in flight: `beginFrame()` declares its channels, each
+   * `appendChannel()` lands one channel's words, and `commitSamples()` publishes the
+   * frame in one step. While `pending` is true, length and query() deliberately do not
+   * move: a render frame must never see channel 0 of a snapshot against channel 19 of
+   * the previous one.
+   */
+  private pending = false;
+  private pendingExpected: boolean[] = [];
+  private pendingWritten: Uint32Array = new Uint32Array(0);
+
+  /**
    * Samples dropped from the front over the store's life. Pyramid bins are absolute
    * (see the header), so this is the only translation queries and appends need.
    */
@@ -152,6 +163,8 @@ export class PlanarSampleStore implements SampleStore {
     this.bytesPerSample = bytesPerSampleForChannels(channelCount);
     this.snapColumns = opts.snapColumns === true;
     this.coreBins = opts.coreBins ?? DEFAULT_CORE_BINS;
+    this.pendingExpected = new Array<boolean>(channelCount).fill(false);
+    this.pendingWritten = new Uint32Array(channelCount);
 
     for (let c = 0; c < channelCount; c++) this.base.push(new BitPlane(BASE_BLOCK_BITS_LOG));
     this.binSize[0] = 1;
@@ -176,6 +189,9 @@ export class PlanarSampleStore implements SampleStore {
   // ---------------------------------------------------------------- append
 
   append(chunk: Uint8Array): void {
+    if (this.pending) {
+      throw new Error('append() cannot interleave with an uncommitted channel-major frame');
+    }
     const bps = this.bytesPerSample;
     if (chunk.byteLength % bps !== 0) {
       throw new Error(`chunk of ${chunk.byteLength} bytes is not a whole number of ${bps}-byte samples`);
@@ -198,9 +214,102 @@ export class PlanarSampleStore implements SampleStore {
     this.updatePyramid(to);
   }
 
+  // ---------------------------------------------------------------- channel-major
+
+  /**
+   * Open one channel-major frame at the current end of the store. The device sends
+   * one uint32 per channel (32 samples, bit 0 = first sample), so every channel's
+   * write starts at the same sample position; nothing is published until
+   * commitSamples().
+   */
+  beginFrame(channels: readonly number[]): void {
+    if (this.pending) {
+      throw new Error('beginFrame() called while the previous channel-major frame is uncommitted');
+    }
+    if (channels.length === 0) throw new Error('a channel-major frame must contain at least one channel');
+    this.pendingExpected.fill(false);
+    this.pendingWritten.fill(0);
+    for (const channel of channels) {
+      if (!Number.isInteger(channel) || channel < 0 || channel >= this.channelCount) {
+        throw new Error(`channel ${channel} is outside 0..${this.channelCount - 1}`);
+      }
+      if (this.pendingExpected[channel]) {
+        throw new Error(`channel ${channel} appears twice in one channel-major frame`);
+      }
+      this.pendingExpected[channel] = true;
+    }
+    this.pending = true;
+  }
+
+  /**
+   * Append one channel's waveform words to the frame opened by beginFrame(). Each word
+   * is 32 consecutive samples, LSB first; a multi-word run is allowed (the caller then
+   * commits the same total sample count). The channel may be written once per frame.
+   */
+  appendChannel(channel: number, startSample: number, words: Uint32Array): void {
+    if (!this.pending) throw new Error('appendChannel() without a beginFrame()');
+    if (!this.pendingExpected[channel]) {
+      throw new Error(`channel ${channel} was not declared for this channel-major frame`);
+    }
+    if (startSample !== this.length) {
+      throw new Error(
+        `channel ${channel} starts at sample ${startSample}, expected ${this.length}; ` +
+          'all channels in a frame share one start position',
+      );
+    }
+    if (words.length === 0) return;
+    if (this.pendingWritten[channel] !== 0) {
+      throw new Error(`channel ${channel} was already written in this channel-major frame`);
+    }
+    const samples = words.length * 32;
+    const dst = startSample + this.baseSkew;
+    const plane = this.base[channel]!;
+    plane.extendTo(dst + samples);
+    plane.writeWords(dst, words);
+    this.pendingWritten[channel] = samples;
+  }
+
+  /**
+   * Publish the frame: every declared channel must have written exactly `samples`
+   * samples. This is the only step that advances length and the pyramid, so a query
+   * issued between channel writes still sees the previous complete frame.
+   */
+  commitSamples(samples: number): void {
+    if (!this.pending) throw new Error('commitSamples() without a beginFrame()');
+    if (!Number.isInteger(samples) || samples <= 0 || samples % 32 !== 0) {
+      throw new Error(`channel-major commits need a positive multiple of 32 samples, got ${samples}`);
+    }
+    for (let channel = 0; channel < this.channelCount; channel++) {
+      if (!this.pendingExpected[channel]) continue;
+      if (this.pendingWritten[channel] !== samples) {
+        throw new Error(
+          `channel ${channel} wrote ${this.pendingWritten[channel]} samples, expected ${samples}`,
+        );
+      }
+    }
+    const to = this.length + samples;
+    if (to > 0x7fffffff) throw new Error(`capture would exceed the 2^31 sample ceiling (${to})`);
+    // A frame may declare fewer channels than the store width (a narrow capture in a
+    // wider store). extendTo() the untouched planes so the shared pyramid reduction
+    // sees a zero-filled block instead of an unallocated one.
+    const dst = to + this.baseSkew;
+    for (let channel = 0; channel < this.channelCount; channel++) {
+      this.base[channel]!.extendTo(dst);
+    }
+    this.length = to;
+    this.validBins[0] = to;
+    this.updatePyramid(to);
+    this.pending = false;
+    this.pendingExpected.fill(false);
+    this.pendingWritten.fill(0);
+  }
+
   // ---------------------------------------------------------------- drop-front
 
   dropFront(samples: number): void {
+    if (this.pending) {
+      throw new Error('dropFront() cannot run in the middle of a channel-major frame');
+    }
     if (!Number.isInteger(samples) || samples < 0 || samples % DROP_FRONT_QUANTUM !== 0) {
       throw new Error(`dropFront drops a non-negative multiple of ${DROP_FRONT_QUANTUM}, got ${samples}`);
     }
@@ -246,6 +355,9 @@ export class PlanarSampleStore implements SampleStore {
    * filters out. Overlapping or adjacent notes are merged.
    */
   noteGap(startSample: number, endSample: number): void {
+    if (this.pending) {
+      throw new Error('noteGap() cannot describe an uncommitted channel-major frame');
+    }
     assertGapBounds(startSample, endSample, this.length);
     this.gapList = mergeGap(this.gapList, startSample, endSample);
   }

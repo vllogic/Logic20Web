@@ -101,10 +101,39 @@ import type { GapSpan, SampleStore } from './types.js';
 import type { ChannelCount } from '../types.js';
 
 /**
+ * Storage layout a device's wire format naturally feeds.
+ *
+ * - `interleaved`: one sample-major word per sample (SLogic U3), copied verbatim.
+ * - `planar`: one channel at a time, bit-packed (VLLogic Logic20), written straight
+ *   into the per-channel planes without a transpose.
+ */
+export type SampleLayout = 'interleaved' | 'planar';
+
+/**
  * What src/device, src/ui and src/render should call. Keeps the concrete class out of
  * their imports so the layout can change without touching them.
+ *
+ * `layout` is normally supplied by the connected device/profile. With no layout, the
+ * historical choice stays: the SLogic widths (8/16/32) are sample-major, everything
+ * else is bit-plane. 20 must be planar: the interleaved store packs a sample into one
+ * 8/16/32-bit word and cannot represent 20 lanes.
  */
-export function createSampleStore(channelCount: ChannelCount, samplerate: number): SampleStore {
+export function createSampleStore(
+  channelCount: ChannelCount,
+  samplerate: number,
+  layout?: SampleLayout,
+): SampleStore {
+  if (layout === 'planar') return new PlanarSampleStore({ channelCount, samplerate });
+  if (layout === 'interleaved') {
+    if (channelCount !== 8 && channelCount !== 16 && channelCount !== 32) {
+      throw new Error(
+        `sample-major storage only represents 8, 16 or 32 channels; ` +
+          `${channelCount} channels need the planar layout`,
+      );
+    }
+    return new InterleavedSampleStore(samplerate, channelCount);
+  }
+  if (channelCount === 20) return new PlanarSampleStore({ channelCount, samplerate });
   if (channelCount === 8 || channelCount === 16 || channelCount === 32) {
     return new InterleavedSampleStore(samplerate, channelCount);
   }

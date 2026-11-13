@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /** Shared capability types. Keep channel-width policy in one place. */
 
-/** Channel widths currently representable by the storage and file formats. */
-export type ChannelCount = 4 | 8 | 16 | 32 | 64 | 128;
+/**
+ * Channel widths currently representable by the storage and file formats.
+ *
+ * 20 is the VLLogic Logic20's native width. It is not a power of two, so stores that
+ * pack a whole sample into a uint8/uint16/uint32 word (InterleavedSampleStore) cannot
+ * represent it; `createSampleStore` routes it to the bit-plane store instead.
+ */
+export type ChannelCount = 4 | 8 | 16 | 20 | 32 | 64 | 128;
 
-export const CHANNEL_COUNTS: readonly ChannelCount[] = [4, 8, 16, 32, 64, 128];
+export const CHANNEL_COUNTS: readonly ChannelCount[] = [4, 8, 16, 20, 32, 64, 128];
 
 export const MAX_SAMPLES = 2 ** 31;
 

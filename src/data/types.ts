@@ -82,6 +82,27 @@ export interface SampleStore {
    *  0 for stores that never drop. Absolute positions = relative + droppedSamples. */
   readonly droppedSamples: number;
   append(chunk: Uint8Array): void;
+  /**
+   * Channel-major capture path (VLLogic Logic20). A device that sends one channel's 32
+   * consecutive samples as a uint32, then the next channel, writes the words straight
+   * into that channel's bit plane. `words[i]` holds samples 32i..32i+31, bit 0 first.
+   *
+   * `startSample` is the frame's first sample (the store's current `length`); the whole
+   * frame is invisible to query()/edges() until `commitSamples()` publishes it. Stores
+   * that only accept interleaved input leave these methods undefined.
+   */
+  appendChannel?(channel: number, startSample: number, words: Uint32Array): void;
+  /**
+   * Declare the channels that make up the next channel-major frame. Called once per
+   * frame before appendChannel(). A channel outside this set is a device/map error.
+   */
+  beginFrame?(channels: readonly number[]): void;
+  /**
+   * Publish one complete channel-major frame: every declared channel must have written
+   * exactly `samples` samples. Advances length, valid bins and the pyramid in one step,
+   * so a render frame can never see half a snapshot.
+   */
+  commitSamples?(samples: number): void;
   dropFront(samples: number): void;
   query(channel: number, startSample: number, endSample: number, bins: number): ColumnView;
   edges(channel: number, startSample: number, endSample: number): Int32Array;

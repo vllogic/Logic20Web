@@ -1643,6 +1643,101 @@ function testDropFront(log: Log): TestResult[] {
   return results;
 }
 
+/**
+ * The channel-major path must be exactly equivalent to appending the same samples in
+ * interleaved form. The device (VLLogic Logic20) sends one channel's 32-sample word at a
+ * time, so a mistake here would show up as a channel/time skew rather than a crash.
+ */
+function testChannelMajor(): TestResult[] {
+  const results: TestResult[] = [];
+  const channels = 20;
+  const snapshots = 64;
+  const a = new PlanarSampleStore({ channelCount: channels, samplerate: 100e6 });
+  const b = new PlanarSampleStore({ channelCount: channels, samplerate: 100e6 });
+  const indices = Array.from({ length: channels }, (_, i) => i);
+  let seed = 0x12345678;
+  const nextWord = (): number => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed;
+  };
+
+  for (let snapshot = 0; snapshot < snapshots; snapshot++) {
+    const words = indices.map(() => nextWord());
+    a.beginFrame(indices);
+    for (const channel of indices) {
+      a.appendChannel(channel, a.length, new Uint32Array([words[channel]!]));
+    }
+    a.commitSamples(32);
+
+    const interleaved = new Uint8Array(32 * 3);
+    for (let sample = 0; sample < 32; sample++) {
+      for (const channel of indices) {
+        if ((words[channel]! >>> sample) & 1) {
+          interleaved[sample * 3 + (channel >> 3)]! |= 1 << (channel & 7);
+        }
+      }
+    }
+    b.append(interleaved);
+  }
+
+  let mismatch = '';
+  if (a.length !== b.length) mismatch = `length ${a.length} != ${b.length}`;
+  for (let channel = 0; channel < channels && !mismatch; channel++) {
+    const va = a.query(channel, 0, a.length, 257);
+    const vb = b.query(channel, 0, b.length, 257);
+    for (let i = 0; i < 257; i++) {
+      if (va.packed[i] !== vb.packed[i]) {
+        mismatch = `channel ${channel} bin ${i}: ${va.packed[i]} != ${vb.packed[i]}`;
+        break;
+      }
+    }
+    if (mismatch) break;
+    const ea = a.edges(channel, 0, a.length);
+    const eb = b.edges(channel, 0, b.length);
+    if (ea.length !== eb.length) {
+      mismatch = `channel ${channel} edges ${ea.length} != ${eb.length}`;
+      break;
+    }
+    for (let i = 0; i < ea.length; i++) {
+      if (ea[i] !== eb[i]) {
+        mismatch = `channel ${channel} edge ${i}: ${ea[i]} != ${eb[i]}`;
+        break;
+      }
+    }
+    for (let i = 0; i < 64; i++) {
+      const pos = (i * 131) % a.length;
+      if (a.sampleAt(channel, pos) !== b.sampleAt(channel, pos)) {
+        mismatch = `channel ${channel} sample ${pos} differs`;
+        break;
+      }
+    }
+  }
+  results.push({
+    name: 'channel-major append matches interleaved append',
+    pass: mismatch === '',
+    detail: mismatch || `${snapshots} snapshots x ${channels} lanes, query/edges/sampleAt equal`,
+  });
+
+  const refused: string[] = [];
+  const bad = new PlanarSampleStore({ channelCount: 20, samplerate: 100e6 });
+  bad.beginFrame([0, 1]);
+  bad.appendChannel(0, 0, new Uint32Array([0x12345678]));
+  try { bad.append(new Uint8Array(3)); refused.push('append during frame'); } catch { /* expected */ }
+  try { bad.commitSamples(32); refused.push('commit with a missing channel'); } catch { /* expected */ }
+  try { bad.commitSamples(31); refused.push('commit a non-32 multiple'); } catch { /* expected */ }
+  try { bad.appendChannel(2, 0, new Uint32Array([0])); refused.push('undeclared channel'); } catch { /* expected */ }
+  bad.appendChannel(1, 0, new Uint32Array([0]));
+  bad.commitSamples(32);
+  try { bad.appendChannel(0, 0, new Uint32Array([0])); refused.push('append without beginFrame'); } catch { /* expected */ }
+  results.push({
+    name: 'channel-major argument contract is enforced',
+    pass: refused.length === 0,
+    detail: refused.length === 0 ? 'all refused' : `accepted: ${refused.join(', ')}`,
+  });
+
+  return results;
+}
+
 /** The full suite minus the 100M-sample cases, which are driven by the bench. */
 export function runFastSuite(log: Log): TestResult[] {
   const results: TestResult[] = [];
@@ -1650,6 +1745,8 @@ export function runFastSuite(log: Log): TestResult[] {
   results.push(...runSoftwareTriggerSuite());
   log('parallel bus value');
   results.push(...runBusValueSuite());
+  log('channel-major append');
+  results.push(...testChannelMajor());
   log('generator sanity');
   {
     const tile = makeTileBlock();
