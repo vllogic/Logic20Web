@@ -35,7 +35,9 @@ npm run dist && npm run check:portable   # single-file portable build and its sm
 ```
 
 The product and engineering contracts are in `docs/ARCHITECTURE.md` and `docs/DESIGN.md`;
-deployment notes are in `docs/DEPLOY.md`.
+deployment notes are in `docs/DEPLOY.md`. Cloudflare Pages setup (Git push to
+auto-deploy, custom domain, `scripts/cloudflare-build.sh`) is in
+`docs/DEPLOY-CLOUDFLARE.md`.
 
 ## License
 

@@ -1,0 +1,8 @@
+# Cloudflare Pages project metadata.
+#
+# Git integration reads the build command and output directory from the Pages
+# dashboard; this file keeps `npx wrangler pages deploy dist` (and local
+# `wrangler pages dev dist`) pointed at the same project.
+name = "logic20web"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-11-13"

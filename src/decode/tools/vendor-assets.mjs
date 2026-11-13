@@ -92,9 +92,27 @@ const outDec = path.join(PUBLIC, 'decoders');
 fs.mkdirSync(outDec, { recursive: true });
 const zipPath = path.join(outDec, 'decoders.zip');
 fs.rmSync(zipPath, { force: true });
-execFileSync('zip', ['-q', '-r', '-9', zipPath, '.',
-  '-x', '*.pyc', '*__pycache__*', '*.sr', '*.output'],
-  { cwd: decodersSrc, stdio: 'inherit' });
+try {
+  execFileSync('zip', ['-q', '-r', '-9', zipPath, '.',
+    '-x', '*.pyc', '*__pycache__*', '*.sr', '*.output'],
+    { cwd: decodersSrc, stdio: 'inherit' });
+} catch (error) {
+  // Cloudflare Pages and some minimal CI images have python3 but no zip. The
+  // archive is zipimport input, so Python's zipfile produces the same tree.
+  if (error?.code !== 'ENOENT') throw error;
+  const script = [
+    'import os, sys, zipfile',
+    'src, dst = sys.argv[1], sys.argv[2]',
+    'with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:',
+    '    for root, dirs, files in os.walk(src):',
+    '        dirs[:] = [d for d in dirs if d != "__pycache__"]',
+    '        for name in files:',
+    '            if name.endswith((".pyc", ".sr", ".output")): continue',
+    '            path = os.path.join(root, name)',
+    '            z.write(path, os.path.relpath(path, src))',
+  ].join('\n');
+  execFileSync('python3', ['-c', script, decodersSrc, zipPath], { stdio: 'inherit' });
+}
 
 const decIds = fs.readdirSync(decodersSrc, { withFileTypes: true })
   .filter(d => d.isDirectory() && d.name !== 'common' &&
