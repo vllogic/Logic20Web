@@ -23,10 +23,14 @@
  * (bit 0 = first sample). One complete snapshot is `nchan` words = 32 sample instants.
  */
 
-/** USB identity. The Logic20 is bcdDevice 0x0820; the older Sniffer2 is 0x0602. */
+/**
+ * USB identity. Logic20 units report bcdDevice 0x0802 (some firmware variants
+ * 0x0820); the older Sniffer2 is 0x0602 and is not protocol compatible.
+ */
 export const VLLOGIC_VID = 0x1209;
 export const VLLOGIC_PID = 0x6688;
-export const VLLOGIC_BCD_LOGIC20 = 0x0820;
+export const VLLOGIC_BCD_LOGIC20 = 0x0802;
+export const VLLOGIC_BCD_LOGIC20_ALT = 0x0820;
 export const VLLOGIC_PRODUCT = 'Logic20';
 export const VLLOGIC_IFACE = 0;
 /** Descriptor endpoint addresses (include the direction bit). */

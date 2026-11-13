@@ -28,6 +28,7 @@ import {
   UHSIF_PAY_MAX,
   UhsifCmd,
   VLLOGIC_BCD_LOGIC20,
+  VLLOGIC_BCD_LOGIC20_ALT,
   VLLOGIC_EP_IN,
   VLLOGIC_EP_OUT,
   VLLOGIC_PRODUCT,
@@ -173,7 +174,7 @@ export class VllogicDevice implements Device {
     // The PID is shared with the USB Sniffer 2 (bcdDevice 0x0602, UHSIF v2.3).
     // Opening it with the v2.2 parser produces CRC failures and random junk.
     const bcd = ((usb.deviceVersionMajor & 0xFF) << 8) | (usb.deviceVersionMinor & 0xFF);
-    const known = bcd === VLLOGIC_BCD_LOGIC20 ||
+    const known = bcd === VLLOGIC_BCD_LOGIC20 || bcd === VLLOGIC_BCD_LOGIC20_ALT ||
       (bcd === 0 && usb.productName === VLLOGIC_PRODUCT);
     if (!known) {
       throw new DiagnosticError('device.unexpectedDevice', {

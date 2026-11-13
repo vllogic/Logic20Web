@@ -13,7 +13,7 @@ records the facts the browser implementation depends on.
 | --- | --- |
 | VID:PID | `0x1209:0x6688` |
 | Product string | `Logic20` |
-| bcdDevice | `0x0820` (the older `0x0602` Sniffer2 is not compatible) |
+| bcdDevice | `0x0802` (some firmware variants report `0x0820`; the older `0x0602` Sniffer2 is not compatible) |
 | Interface | 0 (vendor-specific, class `0xFF`); interface 1 is DLDO and must not be claimed |
 | Bulk OUT | endpoint number 1 (address `0x01`) |
 | Bulk IN | endpoint number 1 (address `0x81`) |

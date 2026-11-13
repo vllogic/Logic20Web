@@ -65,7 +65,7 @@ class FakeUsb {
   readonly productName = 'Logic20';
   readonly serialNumber = 'selftest';
   deviceVersionMajor = 8;
-  deviceVersionMinor = 0x20;
+  deviceVersionMinor = 0x02;
   readonly deviceVersionSubminor = 0;
   readonly chunks: Uint8Array[] = [];
   readonly commands: Array<{ cmd: number; param: number }> = [];
