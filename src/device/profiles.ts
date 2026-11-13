@@ -52,6 +52,7 @@ import {
   VLLOGIC_NUM_CHANNELS,
   VLLOGIC_PID,
   VLLOGIC_RATES,
+  VLLOGIC_THRESHOLD_PRESETS,
   VLLOGIC_VID,
 } from './vllogicProtocol.js';
 
@@ -378,9 +379,6 @@ export const SLOGIC32U3_PROFILE: DeviceProfile = {
  * thread headroom while the worker split is still pending.
  */
 const VLLOGIC_LINK_RATES = ['ss5'] as const;
-const VLLOGIC_THRESHOLDS = [
-  -2.5, -2, -1.5, -1, -0.5, 0, 0.5, 1, 1.65, 2, 2.5, 3.3, 5,
-] as const;
 
 export const VLLOGIC_PROFILE: DeviceProfile = {
   id: 'vllogic-logic20',
@@ -406,7 +404,7 @@ export const VLLOGIC_PROFILE: DeviceProfile = {
       rateTier(20, 160_000_000, VLLOGIC_LINK_RATES),
     ],
     sampleratesHz: VLLOGIC_RATES.map((entry) => entry.rate),
-    thresholdVolts: VLLOGIC_THRESHOLDS,
+    thresholdVolts: VLLOGIC_THRESHOLD_PRESETS,
     testModes: [TEST_MODE_NORMAL],
   },
   analog: {

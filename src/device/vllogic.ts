@@ -26,6 +26,7 @@ import {
   VLLOGIC_EP_OUT,
   VLLOGIC_NUM_CHANNELS,
   VLLOGIC_RATES,
+  VLLOGIC_THRESHOLD_PRESETS,
   VllogicParser,
   vllogicBuildCommand,
   vllogicBuildLut,
@@ -64,6 +65,7 @@ export class VllogicDevice implements Device {
   };
   /** Measured comparator range, see vllogicThresholdToPwm(). */
   readonly thresholdRange = { min: -2.5, max: 5.0 };
+  readonly thresholdPresets = VLLOGIC_THRESHOLD_PRESETS;
 
   onError: ((error: unknown) => void) | null = null;
 

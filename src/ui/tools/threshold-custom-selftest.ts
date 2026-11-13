@@ -80,7 +80,7 @@ const range = thresholdRange();
     panel.includes("['custom', t('capturePanel.thresholdCustom')]") &&
     panel.includes("input.type = 'number'") &&
     panel.includes('input.min = range.min.toFixed(4)') && panel.includes('input.max = range.max.toFixed(4)') &&
-    panel.includes('parseCustomThreshold(input.value)') &&
+    panel.includes('parseCustomThreshold(input.value, snap)') &&
     panel.includes('private thresholdEdit: string | null = null;') &&
     !panel.includes('nearest(THRESHOLD_VOLT_OPTIONS');
   check('the panel turns "Custom…" into a ranged number field and never snaps to a preset', wired, String(wired));

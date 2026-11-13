@@ -466,6 +466,7 @@ export const zhCN: Messages = {
   'capturePanel.thresholdCustom': '自定义…',
   'capturePanel.thresholdRange': '输入 {min}–{max} V；会对齐到设备可设置的最近一档',
   'capturePanel.dacNote': '实际阈值 {volts} V。通道越少，最高采样率越高：{channels} CH 最高 {rate}。（DAC 码 {code}）',
+  'capturePanel.comparatorNote': '比较器阈值 {volts} V。',
   'capturePanel.dacNoteAdvised': '实际阈值 {volts} V。{channels} CH 稳定 {advised}；上限 {rate} 可能超出 USB 链路带宽。通道越少，最高采样率越高。（DAC 码 {code}）',
   'capturePanel.rateAboveAdvised': '{channels} CH @ {rate} 可能超出 USB 链路带宽（稳定 {advised}）。',
   'capturePanel.rateAnalogForced':

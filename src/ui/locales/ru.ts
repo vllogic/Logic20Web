@@ -509,6 +509,7 @@ export const ru: Messages = {
   'capturePanel.thresholdCustom': 'Свой…',
   'capturePanel.thresholdRange': 'Введите {min}–{max} В; значение округляется до ближайшего шага, который поддерживает плата',
   'capturePanel.dacNote': 'Фактический порог {volts} В. Чем меньше каналов, тем выше частота: для {channels} CH максимум {rate}. (код DAC {code})',
+  'capturePanel.comparatorNote': 'Порог компаратора {volts} В.',
   'capturePanel.dacNoteAdvised': 'Фактический порог {volts} В. {channels} CH устойчиво {advised}; потолок {rate} может перегрузить USB-канал. Чем меньше каналов, тем выше частота. (код DAC {code})',
   'capturePanel.rateAboveAdvised': '{channels} CH @ {rate} может превысить пропускную способность USB-канала (устойчиво {advised}).',
   'capturePanel.rateAnalogForced':

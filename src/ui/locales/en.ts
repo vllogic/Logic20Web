@@ -519,6 +519,7 @@ export const en = {
   'capturePanel.thresholdCustom': 'Custom…',
   'capturePanel.thresholdRange': 'Enter {min}–{max} V; it snaps to the nearest step the board can set',
   'capturePanel.dacNote': 'Actual threshold {volts} V. Fewer channels allow a faster rate: {channels} CH tops out at {rate}. (DAC code {code})',
+  'capturePanel.comparatorNote': 'Comparator threshold {volts} V.',
   'capturePanel.dacNoteAdvised': 'Actual threshold {volts} V. {channels} CH sustains {advised}; its {rate} ceiling may overrun the USB link. Fewer channels allow a faster rate. (DAC code {code})',
   'capturePanel.rateAboveAdvised': '{channels} CH @ {rate} may exceed the USB link bandwidth (sustains {advised}).',
   'capturePanel.rateAnalogForced':

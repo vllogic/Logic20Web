@@ -119,6 +119,8 @@ export interface Device {
   readonly sampleLayout?: 'interleaved' | 'channel-major';
   /** Voltage interval a device accepts for its comparator, when it is not the U3 DAC. */
   readonly thresholdRange?: { readonly min: number; readonly max: number };
+  /** Preset threshold voltages offered by a comparator device. */
+  readonly thresholdPresets?: readonly number[];
   /** Capability envelope exposed to the UI; absent for third-party devices. */
   readonly maxChannels?: number;
   /** Discrete rates the device accepts; absent means the SLogic U3 table. */

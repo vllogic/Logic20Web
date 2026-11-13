@@ -32,7 +32,8 @@ import {
   chipLabel, chipRowFit, widestChipBox,
 } from './channelChipLayout.js';
 import {
-  parseCustomThreshold, thresholdChoice, thresholdOptionLabel, thresholdRange,
+  parseCustomThreshold, snapThreshold, thresholdChoice, thresholdOptionLabel, thresholdRange,
+  type ThresholdRange,
 } from './thresholdOptions.js';
 import { t } from './i18n.js';
 import { helpTip } from './helpTip.js';
@@ -179,6 +180,12 @@ export interface CapturePanelView {
   maxSamplerateHz: Readonly<Record<number, number>>;
   /** Device-specific rate table; absent means the SLogic U3 SAMPLERATES_HZ. */
   sampleratesHz?: readonly number[] | undefined;
+  /** Device comparator presets; absent means the U3 logic-family list. */
+  thresholdPresets?: readonly number[] | undefined;
+  /** Device comparator custom-entry range; absent means the U3 vref DAC range. */
+  thresholdRange?: ThresholdRange | undefined;
+  /** False when the threshold is a comparator, so the U3 DAC readback note is wrong. */
+  thresholdDac?: boolean;
   /** Per-width rate the board sustains below that ceiling (`Device.recommendedSamplerateHz`). */
   recommendedSamplerateHz?: Readonly<Record<number, number>>;
   triggerState: TriggerNoteState;
@@ -810,8 +817,23 @@ export class CapturePanel {
     rowRT.appendChild(rate.el);
 
     const thresholdEditing = this.thresholdEdit;
+    const thresholdRange = v.thresholdRange;
+    const thresholdPresets = v.thresholdPresets;
+    const thresholdSnap = thresholdRange && v.thresholdDac === false
+      ? (volts: number): number | null => {
+        if (!Number.isFinite(volts)) return null;
+        if (thresholdPresets?.includes(volts)) return volts;
+        if (volts < thresholdRange.min - thresholdRange.step / 2 ||
+            volts > thresholdRange.max + thresholdRange.step / 2) return null;
+        const steps = Math.round(volts / thresholdRange.step);
+        return Number((steps * thresholdRange.step).toFixed(3));
+      }
+      : undefined;
     const th = thresholdField({
       volts: s.thresholdVolts,
+      ...(thresholdPresets ? { presets: thresholdPresets } : {}),
+      ...(thresholdRange ? { range: thresholdRange } : {}),
+      ...(thresholdSnap ? { snap: thresholdSnap } : {}),
       editing: thresholdEditing,
       live: () => !this.rendering,
       onEditing: (text) => { this.thresholdEdit = text; },
@@ -859,25 +881,31 @@ export class CapturePanel {
       chSec.body.appendChild(analogNote);
     }
 
-    const code = vrefCode(s.thresholdVolts);
     const note = div('panel-note');
     // The ceiling is what the board accepts, not what the USB link sustains: where the
     // profile measured a lower sustainable rate, the note leads with that figure.
     const advised = v.recommendedSamplerateHz?.[s.channels];
-    note.textContent = advised !== undefined && advised < ceiling
-      ? t('capturePanel.dacNoteAdvised', {
-        code,
-        volts: vrefVolts(code).toFixed(3),
-        channels: s.channels,
-        advised: formatRate(advised),
-        rate: formatRate(ceiling),
-      })
-      : t('capturePanel.dacNote', {
-        code,
-        volts: vrefVolts(code).toFixed(3),
-        channels: s.channels,
-        rate: formatRate(ceiling),
+    if (v.thresholdDac === false) {
+      note.textContent = t('capturePanel.comparatorNote', {
+        volts: s.thresholdVolts.toFixed(3),
       });
+    } else {
+      const code = vrefCode(s.thresholdVolts);
+      note.textContent = advised !== undefined && advised < ceiling
+        ? t('capturePanel.dacNoteAdvised', {
+          code,
+          volts: vrefVolts(code).toFixed(3),
+          channels: s.channels,
+          advised: formatRate(advised),
+          rate: formatRate(ceiling),
+        })
+        : t('capturePanel.dacNote', {
+          code,
+          volts: vrefVolts(code).toFixed(3),
+          channels: s.channels,
+          rate: formatRate(ceiling),
+        });
+    }
     chSec.body.appendChild(note);
     capture.appendChild(chSec.el);
 
@@ -1847,6 +1875,11 @@ export function analogGainCell(o: AnalogGainCellOptions): AnalogGainCell {
 
 export interface ThresholdFieldOptions {
   volts: number;
+  /** Presets offered in the select; defaults to the U3 logic-family list. */
+  presets?: readonly number[];
+  /** Custom-entry range and snap grid; defaults to the U3 vref DAC. */
+  range?: ThresholdRange;
+  snap?: (volts: number) => number | null;
   /** The custom text being typed when the panel was rebuilt, or null. */
   editing: string | null;
   /** False while the owner detaches the old tree, so a removed field's blur is inert. */
@@ -1865,11 +1898,13 @@ export interface ThresholdFieldOptions {
  */
 export function thresholdField(o: ThresholdFieldOptions): { el: HTMLElement; focusField(): void } {
   const { volts } = o;
-  const range = thresholdRange();
+  const presets = o.presets ?? THRESHOLD_VOLT_OPTIONS;
+  const range = o.range ?? thresholdRange();
+  const snap = o.snap ?? snapThreshold;
   const slot = div('threshold-field');
   const options: SelectOptionTuple[] = [
-    ...THRESHOLD_VOLT_OPTIONS.map((preset): SelectOptionTuple => [String(preset), thresholdOptionLabel(preset)]),
-    ...(thresholdChoice(volts) === 'custom'
+    ...presets.map((preset): SelectOptionTuple => [String(preset), thresholdOptionLabel(preset)]),
+    ...(thresholdChoice(volts, presets) === 'custom'
       ? [[String(volts), t('capturePanel.thresholdVolts', { volts: volts.toFixed(3) })] as SelectOptionTuple]
       : []),
     ['custom', t('capturePanel.thresholdCustom')],
@@ -1916,7 +1951,7 @@ export function thresholdField(o: ThresholdFieldOptions): { el: HTMLElement; foc
     if (focus) focusField();
   };
   const apply = (how: 'enter' | 'blur'): void => {
-    const next = parseCustomThreshold(input.value);
+    const next = parseCustomThreshold(input.value, snap);
     if (next === null) {
       if (how === 'blur') {
         showSelect(false);

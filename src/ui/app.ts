@@ -5019,6 +5019,11 @@ export class App {
       progress: this.running ? this.progressView() : null,
       maxSamplerateHz: this.rateCeilings,
       sampleratesHz: this.device?.sampleratesHz,
+      thresholdPresets: this.device?.thresholdPresets,
+      thresholdRange: this.device?.thresholdRange
+        ? { min: this.device.thresholdRange.min, max: this.device.thresholdRange.max, step: 0.001 }
+        : undefined,
+      thresholdDac: this.device?.sampleLayout !== 'channel-major',
       recommendedSamplerateHz: this.rateRecommendations,
       triggerState: this.triggerState,
       cursors: this.cursorRows(),

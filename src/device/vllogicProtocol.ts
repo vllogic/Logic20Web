@@ -105,6 +105,14 @@ export const VLLOGIC_RATES: readonly VllogicRate[] = [
   { rate: 1_200_000_000, div: 2 },
 ];
 
+/**
+ * Comparator presets shown in the UI. The comparator accepts the measured -2.5..+5.0 V
+ * interval; these are the common logic-family points plus the measured endpoints.
+ */
+export const VLLOGIC_THRESHOLD_PRESETS: readonly number[] = [
+  -2.5, -2, -1.5, -1, -0.5, 0, 0.5, 1, 1.2, 1.65, 2, 2.5, 3.3, 5,
+];
+
 /** Applies the device's own per-rate channel ceiling (see vllogic_max_channels()). */
 export function vllogicMaxChannels(rate: number): number {
   if (rate > 800_000_000) return 2;

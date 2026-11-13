@@ -518,6 +518,7 @@ export const fr: Messages = {
   'capturePanel.thresholdCustom': 'Personnalisé…',
   'capturePanel.thresholdRange': 'Saisissez {min} à {max} V ; la valeur s’aligne sur le pas réglable le plus proche de la carte',
   'capturePanel.dacNote': 'Seuil réel {volts} V. Moins de voies permettent une fréquence plus élevée : {channels} CH plafonne à {rate}. (code DAC {code})',
+  'capturePanel.comparatorNote': 'Seuil du comparateur {volts} V.',
   'capturePanel.dacNoteAdvised': 'Seuil réel {volts} V. {channels} CH tient {advised} en continu ; son plafond {rate} peut saturer le lien USB. Moins de voies permettent une fréquence plus élevée. (code DAC {code})',
   'capturePanel.rateAboveAdvised': '{channels} CH @ {rate} peut dépasser la bande passante du lien USB (tient {advised} en continu).',
   'capturePanel.rateAnalogForced':

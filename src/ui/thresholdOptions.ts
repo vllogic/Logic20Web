@@ -17,6 +17,7 @@
  * advisory text only; the device still receives the plain voltage.
  */
 import { vrefCode, vrefVolts } from '../device/index.js';
+import { VLLOGIC_THRESHOLD_PRESETS } from '../device/vllogicProtocol.js';
 import { t } from './i18n.js';
 import { THRESHOLD_VOLT_OPTIONS } from './state.js';
 
@@ -56,8 +57,10 @@ export function thresholdRange(): ThresholdRange {
 }
 
 /** True for one of the offered presets (the select's own values). */
-export function isThresholdPreset(volts: number): boolean {
-  return (THRESHOLD_VOLT_OPTIONS as readonly number[]).includes(volts);
+export function isThresholdPreset(
+  volts: number, presets: readonly number[] = THRESHOLD_VOLT_OPTIONS,
+): boolean {
+  return presets.includes(volts);
 }
 
 /**
@@ -75,22 +78,33 @@ export function snapThreshold(volts: number): number | null {
   return Number(vrefVolts(code).toFixed(4));
 }
 
-/** A typed custom threshold ("1.0", "1,0", "1.0 V"), snapped as `snapThreshold`. */
-export function parseCustomThreshold(text: string): number | null {
+/** A typed custom threshold ("1.0", "1,0", "1.0 V"), snapped by the caller's rule. */
+export function parseCustomThreshold(
+  text: string, snap: (volts: number) => number | null = snapThreshold,
+): number | null {
   const trimmed = text.trim().replace(/\s*v$/i, '').replace(',', '.');
-  if (!/^\+?(\d+\.?\d*|\.\d+)$/.test(trimmed)) return null;
-  return snapThreshold(Number(trimmed));
+  // The U3 DAC is positive-only, but a comparator such as the Logic20's accepts a
+  // negative threshold; let the caller's snap/range decide instead of rejecting "-2".
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(trimmed)) return null;
+  return snap(Number(trimmed));
 }
 
 /**
- * A stored threshold that may be restored: a preset, or a custom value already on the
- * DAC grid (what `snapThreshold` produces). Anything else falls back to the default.
+ * A stored threshold that may be restored: a preset, a custom value on the U3 DAC grid,
+ * or a value inside the Logic20 comparator's -2.5..+5.0 V range. The active device still
+ * validates the exact range before a capture.
  */
 export function isRestorableThreshold(volts: number): boolean {
-  return snapThreshold(volts) === volts;
+  if (!Number.isFinite(volts)) return false;
+  if (snapThreshold(volts) === volts) return true;
+  // A stored Logic20 comparator preset survives a reload even though it is not on the
+  // U3 DAC grid; a custom comparator value is re-entered after connecting.
+  return VLLOGIC_THRESHOLD_PRESETS.includes(volts);
 }
 
 /** The select value for a threshold: a preset's own value, else `custom`. */
-export function thresholdChoice(volts: number): string {
-  return isThresholdPreset(volts) ? String(volts) : 'custom';
+export function thresholdChoice(
+  volts: number, presets: readonly number[] = THRESHOLD_VOLT_OPTIONS,
+): string {
+  return isThresholdPreset(volts, presets) ? String(volts) : 'custom';
 }
