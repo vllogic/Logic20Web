@@ -44,7 +44,10 @@ const SHELL_CACHE = `${PREFIX}shell-${VERSION}`;
 const RUNTIME_CACHE = `${PREFIX}runtime`;
 
 const abs = (rel) => new URL(rel, SCOPE).href;
-const INDEX_URL = abs(SHELL.index);
+// The canonical document URL. Cloudflare Workers redirects /index.html to / with a
+// 307, so fetching the file URL during install would be a redirected (non-basic)
+// response and fail precache. The scope root is the URL navigation actually uses.
+const INDEX_URL = SCOPE;
 const SHELL_URLS = new Set([INDEX_URL, ...SHELL.hashed.map(abs), ...SHELL.plain.map(abs)]);
 const RUNTIME_URLS = new Set(SHELL.runtime.map(abs));
 
