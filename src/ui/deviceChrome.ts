@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * Device chrome view models: what the toolbar Device command, its connected-device menu,
  * the empty-state hint and the browser-support notice say for one connection state.

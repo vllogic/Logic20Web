@@ -1,3 +1,5 @@
+<!-- Copyright (C) 2026 vllogic.com -->
+
 # slogicweb MSO - interface design
 
 **Status: v2 target.** This document specifies what the user sees and does: layout,

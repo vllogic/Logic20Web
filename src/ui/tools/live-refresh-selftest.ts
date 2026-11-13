@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 
 import {
   LIVE_FRAME_CEIL_MS, LIVE_FRAME_FLOOR_MS, liveDrawDue, liveFrameIntervalMs,

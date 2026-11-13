@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Sipeed Co., Ltd.
+// Copyright (C) 2026 vllogic.com
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -394,6 +395,7 @@ function pwaShell(): Plugin {
 const BANNER =
   '/*! SPDX-License-Identifier: GPL-3.0-or-later\n' +
   ' * slogicweb - Copyright (C) 2026 Sipeed Co., Ltd. and contributors\n' +
+  ' * Logic20 changes - Copyright (C) 2026 vllogic.com\n' +
   ' * Free software with NO WARRANTY, under GNU GPL v3 or later.\n' +
   ' * Source: https://github.com/vllogic/logic20web\n' +
   ' */';

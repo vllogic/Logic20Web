@@ -1,3 +1,5 @@
+<!-- Copyright (C) 2026 vllogic.com -->
+
 # SLogicWeb
 
 A browser logic analyzer and mixed-signal viewer for Sipeed SLogic16 U3, SLogic32 U3 and

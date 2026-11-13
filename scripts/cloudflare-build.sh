@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 vllogic.com
 # Alternative build entry for Cloudflare Pages Git integration.
 #
 # Workers Builds (the default `npm run build` + `npx wrangler deploy` setup) does

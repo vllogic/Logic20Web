@@ -1,3 +1,4 @@
+// Copyright (C) 2026 vllogic.com
 import { connectSamplerate } from '../connectDefaults.js';
 import {
   SAMPLERATES_HZ, SLOGIC16U3_PROFILE, SLOGIC32U3_PROFILE, recommendedSamplerateHzFor,

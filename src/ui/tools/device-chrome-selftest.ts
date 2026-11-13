@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * Device chrome: typed connect failures (connectFailure.ts), the other-tab presence probe
  * (deviceTabPresence.ts), the Device command / device menu / empty hint / browser notice

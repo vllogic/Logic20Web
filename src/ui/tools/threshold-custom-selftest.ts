@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * The custom digital threshold (thresholdOptions.ts, capturePanel.ts `thresholdField`):
  * the range comes from the vref DAC math, an entry snaps only to the DAC grid (never to

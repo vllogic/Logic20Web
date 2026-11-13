@@ -1,3 +1,5 @@
+<!-- Copyright (C) 2026 vllogic.com -->
+
 # Deployment
 
 [The deployment workflow](../.github/workflows/deploy-pages.yml) builds on pushes to

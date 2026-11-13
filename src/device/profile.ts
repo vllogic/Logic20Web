@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * DeviceProfile lookup, validation and capability helpers.
  *

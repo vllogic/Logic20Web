@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 
 import { validateBusSpec, type BusSpec } from '../data/busValue.js';
 import { PROFILES } from '../device/profiles.js';

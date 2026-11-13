@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * Deterministic checks for the M0 settings transaction. Self-contained: fake
  * 16U3-like/32U3-like profiles, in-memory contexts, no device, DOM or storage.

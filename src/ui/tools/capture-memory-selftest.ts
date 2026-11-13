@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * "Use it longer": the memory ceiling for a request above it,
  * the panel's ceiling/remaining readout, the typed 'memory' abort, the streamed .lwcap

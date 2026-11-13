@@ -1,3 +1,5 @@
+<!-- Copyright (C) 2026 vllogic.com -->
+
 # Deploying to Cloudflare Workers
 
 This repository is set up for **Cloudflare Workers Builds** with static assets.

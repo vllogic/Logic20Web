@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * Aggregate offline test entry point: type-check, then bundle and run every self-test
  * that does not need the real device.

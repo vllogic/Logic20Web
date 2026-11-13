@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * npm's `prebuild` hook: make `npm run build` work on a fresh checkout.
  *

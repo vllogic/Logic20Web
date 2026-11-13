@@ -1,3 +1,4 @@
+# Copyright (C) 2026 vllogic.com
 # Cloudflare Pages response headers.
 #
 # COOP/COEP make this a cross-origin-isolated secure context, so SharedArrayBuffer

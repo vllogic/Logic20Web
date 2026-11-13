@@ -1,3 +1,4 @@
+// Copyright (C) 2026 vllogic.com
 import { settingsMenuRight } from '../settingsMenu.js';
 import { sameUsbDevice } from '../deviceIdentity.js';
 import { TransportDeadError } from '../../device/index.js';

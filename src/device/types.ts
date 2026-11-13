@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Sipeed Co., Ltd.
+// Copyright (C) 2026 vllogic.com
 /**
  * Public contract for src/device, as specified in docs/ARCHITECTURE.md.
  * Nothing outside this file is part of the cross-module interface.

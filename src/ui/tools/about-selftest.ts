@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Sipeed Co., Ltd.
+// Copyright (C) 2026 vllogic.com
 /**
  * Settings > About: the view model (name, version/build, licence, copyright, links), the
  * build-identity fallback, the four catalogs, the About pane's inline render and the vite

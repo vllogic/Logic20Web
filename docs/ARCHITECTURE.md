@@ -1,3 +1,5 @@
+<!-- Copyright (C) 2026 vllogic.com -->
+
 # slogicweb MSO - system architecture and module contracts
 
 **Status: v2 target.** This document specifies the engine and platform contracts for the

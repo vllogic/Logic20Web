@@ -1,3 +1,4 @@
+# Copyright (C) 2026 vllogic.com
 # Build the multi-file web distribution and publish it to GitHub Pages.
 #
 # Why each step exists (see docs/ and src/decode/tools/vendor-assets.mjs):

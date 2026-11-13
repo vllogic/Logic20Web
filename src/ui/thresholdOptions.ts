@@ -1,3 +1,4 @@
+// Copyright (C) 2026 vllogic.com
 /**
  * Readable labels for the digital threshold choices (`THRESHOLD_VOLT_OPTIONS`).
  *

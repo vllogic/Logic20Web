@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
 /**
  * The U3 device profiles. Data only: every value here is either a protocol
  * constant from `protocol.ts`, a measurement recorded in `NOTES.md` /

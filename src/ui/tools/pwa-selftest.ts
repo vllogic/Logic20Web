@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Sipeed Co., Ltd.
+// Copyright (C) 2026 vllogic.com
 /**
  * Node entry point for the PWA shell suite (src/pwa/, src/ui/pwaUpdate.ts).
  *

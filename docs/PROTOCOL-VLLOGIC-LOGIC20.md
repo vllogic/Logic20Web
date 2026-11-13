@@ -1,3 +1,5 @@
+<!-- Copyright (C) 2026 vllogic.com -->
+
 # VLLogic Logic20 - UHSIF v2.2
 
 The Logic20 is a 20-lane USB 3.0 logic analyzer streamed by the `vllogic-logic`

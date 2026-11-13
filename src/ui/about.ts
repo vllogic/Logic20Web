@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Sipeed Co., Ltd.
+// Copyright (C) 2026 vllogic.com
 /**
  * Settings > About: app name, version and build id, the licence line and links to the
  * source, the licence text and the third-party notices (the bundled sigrok decoders).

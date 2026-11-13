@@ -1,3 +1,5 @@
+<!-- Copyright (C) 2026 vllogic.com -->
+
 # Licence and third-party components
 
 slogicweb is licensed under the **GNU General Public License, version 3 or later**
@@ -5,6 +7,7 @@ slogicweb is licensed under the **GNU General Public License, version 3 or later
 SPDX identifier.
 
 Copyright (C) 2026 Sipeed Co., Ltd. and contributors.
+Copyright (C) 2026 vllogic.com.
 
 ## Why GPL, and why it is not a constraint imposed from outside
 

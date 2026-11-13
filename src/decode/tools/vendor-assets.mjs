@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Sipeed Co., Ltd.
+// Copyright (C) 2026 vllogic.com
 // Stage the two runtime assets the decode worker fetches at run time:
 //
 //   public/pyodide/          the Pyodide runtime (wasm + stdlib)

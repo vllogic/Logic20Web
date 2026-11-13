@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Sipeed Co., Ltd.
+// Copyright (C) 2026 vllogic.com
 /**
  * Build side of the PWA shell (docs/ARCHITECTURE.md section 7.2). Run by vite.config.ts
  * after every other closeBundle step of a HOSTED build - the portable single-file build
