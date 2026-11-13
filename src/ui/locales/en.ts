@@ -27,7 +27,7 @@ export const en = {
   'toolbar.deviceConnected': 'Connected',
   'toolbar.deviceMenuTitle': '{device} is connected. Click for device details, Disconnect or Connect another device.',
   'toolbar.webusbUnavailable': 'WebUSB unavailable',
-  'toolbar.connectHint': 'Click “Connect device” and pick an SLogic16/32 U3. The grant is remembered for this origin.',
+  'toolbar.connectHint': 'Click “Connect device” and pick a Logic20. The grant is remembered for this origin.',
   'toolbar.noWebusb': 'This browser cannot connect devices (no WebUSB). Use Chrome or Edge.',
   'toolbar.noWebusbInsecure': 'Connecting a device needs a secure page (HTTPS or localhost). Open this page over HTTPS in Chrome or Edge.',
   'toolbar.start': 'Capture',

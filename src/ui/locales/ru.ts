@@ -23,7 +23,7 @@ export const ru: Messages = {
   'toolbar.deviceConnected': 'Подключено',
   'toolbar.deviceMenuTitle': '{device} подключено. Нажмите, чтобы открыть сведения об устройстве, отключить его или подключить другое.',
   'toolbar.webusbUnavailable': 'WebUSB недоступен',
-  'toolbar.connectHint': 'Нажмите «Подключить устройство» и выберите SLogic16/32 U3. Разрешение запоминается для этого источника.',
+  'toolbar.connectHint': 'Нажмите «Подключить устройство» и выберите Logic20. Разрешение запоминается для этого источника.',
   'toolbar.noWebusb': 'Этот браузер не может подключать устройства (нет WebUSB). Используйте Chrome или Edge.',
   'toolbar.noWebusbInsecure': 'Для подключения устройства нужна защищённая страница (HTTPS или localhost). Откройте эту страницу по HTTPS в Chrome или Edge.',
   'toolbar.start': 'Захват',

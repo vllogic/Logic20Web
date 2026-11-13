@@ -21,7 +21,7 @@ export const zhCN: Messages = {
   'toolbar.deviceConnected': '已连接',
   'toolbar.deviceMenuTitle': '{device} 已连接。点击查看设备信息、断开连接或连接其他设备。',
   'toolbar.webusbUnavailable': 'WebUSB 不可用',
-  'toolbar.connectHint': '点击"连接设备"并选择 SLogic16/32 U3。浏览器会记住此站点的授权。',
+  'toolbar.connectHint': '点击"连接设备"并选择 Logic20。浏览器会记住此站点的授权。',
   'toolbar.noWebusb': '此浏览器无法连接设备（不支持 WebUSB）。请使用 Chrome 或 Edge。',
   'toolbar.noWebusbInsecure': '连接设备需要安全页面（HTTPS 或 localhost）。请在 Chrome 或 Edge 中通过 HTTPS 打开本页。',
   'toolbar.start': '采集',

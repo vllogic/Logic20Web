@@ -23,7 +23,7 @@ export const fr: Messages = {
   'toolbar.deviceConnected': 'Connecté',
   'toolbar.deviceMenuTitle': '{device} est connecté. Cliquez pour les détails de l’appareil, Déconnecter ou Connecter un autre appareil.',
   'toolbar.webusbUnavailable': 'WebUSB indisponible',
-  'toolbar.connectHint': 'Cliquez sur « Connecter l’appareil » et choisissez un SLogic16/32 U3. L’autorisation est mémorisée pour cette origine.',
+  'toolbar.connectHint': 'Cliquez sur « Connecter l’appareil » et choisissez un Logic20. L’autorisation est mémorisée pour cette origine.',
   'toolbar.noWebusb': 'Ce navigateur ne peut pas connecter d’appareil (pas de WebUSB). Utilisez Chrome ou Edge.',
   'toolbar.noWebusbInsecure': 'La connexion d’un appareil exige une page sécurisée (HTTPS ou localhost). Ouvrez cette page en HTTPS dans Chrome ou Edge.',
   'toolbar.start': 'Capturer',
