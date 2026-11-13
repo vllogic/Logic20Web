@@ -25,15 +25,11 @@
  * - Runtime (Pyodide directory + decoders zip, ~14 MB, content-hashed): stored in the
  *   name-stable `<prefix>runtime` cache and answered cache-first; activation prunes entries
  *   the current build no longer names, so an unchanged runtime survives shell updates and
- *   a changed one replaces the old copy. They are filled two ways:
- *     * best effort during install (fillRuntime). This is deliberate while App warms the
- *       decode worker at every boot: the page downloads these bytes on its first visit
- *       anyway, so filling them at install costs nothing extra (default cache mode, so the
- *       browser HTTP cache answers) and makes the very next offline start decode. A
- *       failure here never fails the install;
- *     * on first use, by the fetch handler, for anything the fill missed.
- *   If decode warm-up ever becomes on-demand, drop the install-time fill and the runtime
- *   becomes purely cached on first use - the phone must not pay 14 MB it never decodes.
+ *   a changed one replaces the old copy. It is cached **on first use**, never during
+ *   install: a 14 MB fill must not keep the install event pending (Chrome marks a slow
+ *   install redundant, which leaves the page uncontrolled and makes F5 hit the network).
+ *   The decode worker's boot warm-up is the first user, so the next F5/offline start hits
+ *   the cache.
  * - No skipWaiting on install. A new version waits until the page asks (the update notice
  *   in src/ui/pwaUpdate.ts posts SKIP_WAITING after the user clicks), so a running capture
  *   is never swapped to a different shell underneath the user.
@@ -79,21 +75,6 @@ async function precache() {
   await Promise.all(SHELL.plain.map((rel) => cache.add(new Request(abs(rel), { cache: 'reload' }))));
 }
 
-/** Best-effort runtime fill; see the policy above. Never rejects. */
-async function fillRuntime() {
-  const cache = await caches.open(RUNTIME_CACHE);
-  await Promise.all(SHELL.runtime.map(async (rel) => {
-    const url = abs(rel);
-    if (await cache.match(url)) return;
-    try {
-      const response = await fetch(url);
-      if (storable(response)) await cache.put(url, response);
-    } catch {
-      // Offline or a CDN blip: the fetch handler caches it on first use instead.
-    }
-  }));
-}
-
 async function rotate() {
   for (const name of await caches.keys()) {
     // `logicweb:` is the pre-rename (before 0.1.0) prefix: nothing reads those caches now.
@@ -109,8 +90,9 @@ async function rotate() {
 }
 
 self.addEventListener('install', (event) => {
-  // The shell must install; the runtime fill may not fail it.
-  event.waitUntil(precache().then(() => fillRuntime().catch(() => {})));
+  // Only the shell is a precondition. Runtime bytes are cached by the fetch handler
+  // on first use; awaiting 14 MB here can make a slow install redundant.
+  event.waitUntil(precache());
 });
 
 self.addEventListener('activate', (event) => {

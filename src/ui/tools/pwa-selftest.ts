@@ -184,10 +184,11 @@ try {
     !installBody.includes('skipWaiting') && (s.match(/skipWaiting\(\)/g) ?? []).length === 1 &&
       /event\.data\.type === 'SKIP_WAITING'\) self\.skipWaiting\(\)/.test(s),
     'install only precaches');
-  check('sw: the runtime fill is best effort and can never fail the shell install',
-    installBody.includes('precache().then(() => fillRuntime().catch(() => {}))') &&
-      s.includes('if (await cache.match(url)) return;'),
-    'an unchanged runtime is not downloaded again');
+  check('sw: install precaches only the shell, not the 14 MB runtime',
+    installBody.includes('event.waitUntil(precache())') &&
+      !installBody.includes('fillRuntime') &&
+      s.includes('cacheFirst(request, bare, RUNTIME_CACHE)'),
+    'runtime is cached on first use');
   check('sw: same-origin GETs only, and only stored when a complete basic response',
     s.includes("if (request.method !== 'GET') return;") &&
       s.includes('if (url.origin !== self.location.origin) return;') &&

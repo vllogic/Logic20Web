@@ -828,11 +828,10 @@ Key transitions (the full table is generated in one pure module):
     waits for the explicit Update click. The network copy is never stored. Listed shell
     files are cache-first. Cross-origin, non-GET, range and unlisted requests pass through
     untouched.
-  - Pyodide/decoders (~14 MB): filled **best effort at install** while App warms the decode
-    worker at boot (the page downloads those bytes on its first visit anyway, and the HTTP
-    cache answers the fill), and otherwise cached on first use. A failed fill never fails
-    the install. If warm-up becomes on-demand, drop the fill: the runtime is then purely
-    lazy, so a phone that never decodes never pays for it.
+  - Pyodide/decoders (~14 MB): cached **on first use** by the fetch handler, never during
+    install. A 14 MB install-time fill can keep the install event pending long enough for
+    Chrome to mark the worker redundant, leaving the page uncontrolled; the decode worker's
+    boot warm-up is the first user, so the next reload/offline start hits the cache.
   - No `skipWaiting` on install. A waiting version raises a localized notice with Reload;
     only that click posts `SKIP_WAITING`, and the page reloads on `controllerchange`.
     Registration happens after App constructs, only when `__SLOGICWEB_PWA__` (false for
