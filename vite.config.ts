@@ -252,10 +252,22 @@ function emitLicense(): Plugin {
  * runtime data, so the result does not perform a neighbouring file:// import or fetch.
  */
 function inlineEntryForFileOpen(): Plugin {
+  // The resolved deploy base. A sub-path build (`--base=/Logic20Web/`) puts the base
+  // prefix in every asset URL in the emitted HTML, but the file really lives at
+  // dist/assets/index-*.js - stripping only the leading slash would resolve to
+  // dist/Logic20Web/assets/... and fail with ENOENT in closeBundle.
+  let base = './';
+  const toDistRel = (url: string): string =>
+    base !== './' && base !== '' && url.startsWith(base)
+      ? url.slice(base.length)
+      : url.replace(/^\.\//, '').replace(/^\//, '');
   return {
     name: 'slogicweb:inline-entry-for-file-open',
     apply: 'build',
     enforce: 'post',
+    configResolved(config) {
+      base = config.base ?? './';
+    },
     closeBundle() {
       const out = resolve(__dirname, 'dist');
       const indexPath = resolve(out, 'index.html');
@@ -263,7 +275,7 @@ function inlineEntryForFileOpen(): Plugin {
       html = html.replace(
         /<script\s+type="module"[^>]*\ssrc="([^"]+)"[^>]*><\/script>/,
         (_tag, src: string) => {
-          const rel = src.replace(/^\.\//, '').replace(/^\//, '');
+          const rel = toDistRel(src);
           let code = readFileSync(resolve(out, rel), 'utf8');
           const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
           // Both the entry and the inline worker carry source map comments. Put the
@@ -271,8 +283,7 @@ function inlineEntryForFileOpen(): Plugin {
           code = code.replace(
             /\/\/# sourceMappingURL=([A-Za-z0-9_./-]+\.map)/g,
             (_comment, map: string) => {
-              const mapPath = resolve(
-                out, dir, map.replace(/^\.\//, '').replace(/^\//, ''));
+              const mapPath = resolve(out, dir, toDistRel(map));
               return `//# sourceMappingURL=data:application/json;base64,${
                 readFileSync(mapPath).toString('base64')}`;
             },
@@ -281,6 +292,18 @@ function inlineEntryForFileOpen(): Plugin {
             /new URL\("([^"./][^"]*?\.js)",(\s*)import\.meta\.url\)/g,
             'new URL("assets/$1",$2import.meta.url)',
           );
+          // The entry chunk is emitted under dist/assets, so rollup writes sibling
+          // chunks at the dist root as "../<name>.js". Once this code is inlined into
+          // dist/index.html, the same chunk is "./<name>.js" - and that stays correct
+          // when the whole dist tree is served from a sub-path.
+          code = code.replace(
+            /(\bimport\s*\(\s*["'])\.\.\/([^"']+\.js)(["']\s*\))/g,
+            '$1./$2$3',
+          );
+          code = code.replace(
+            /(\bfrom\s*["'])\.\.\/([^"']+\.js)(["'])/g,
+            '$1./$2$3',
+          );
           code = code.replace(/<\/script/gi, '<\\/script');
           return `<script type="module">\n${code}\n</script>`;
         },
@@ -288,7 +311,7 @@ function inlineEntryForFileOpen(): Plugin {
       html = html.replace(
         /<link\s+rel="stylesheet"[^>]*\shref="([^"]+)"[^>]*>/,
         (_tag, href: string) => {
-          const rel = href.replace(/^\.\//, '').replace(/^\//, '');
+          const rel = toDistRel(href);
           return `<style>\n${readFileSync(resolve(out, rel), 'utf8')}\n</style>`;
         },
       );
