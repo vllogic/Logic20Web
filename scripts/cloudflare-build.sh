@@ -17,7 +17,9 @@ cd "$(dirname "$0")/.."
 # is deliberately bumped. Cloudflare can override it with a project variable.
 DECODERS_REF="${LIBSIGROKDECODE_REF:-71f451443029322d57376214c330b518efd84f88}"
 
-npm ci
+# Cloudflare may export NODE_ENV=production, which would make npm omit the
+# TypeScript/Vite devDependencies this build needs.
+npm ci --include=dev
 
 LSRD="${TMPDIR:-/tmp}/libsigrokdecode"
 rm -rf "$LSRD"
