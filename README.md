@@ -7,7 +7,7 @@ nothing to install: open the page in a Chromium-based browser, connect the board
 capture. Everything runs locally; there are no accounts and no cloud.
 
 - Hosted: https://slogic.sipeed.com
-- Source: https://github.com/sipeed/slogicweb
+- Source: https://github.com/vllogic/logic20web
 
 ## Features
 

@@ -88,7 +88,7 @@ function aboutPane(settingsWindow: string, app: string, about: string): boolean 
     JSON.stringify(view));
   check('the About links are the source repository, its LICENSE and NOTICE.md (third-party decoders)',
     view.links.length === 3 &&
-      view.links[0]!.href === 'https://github.com/sipeed/slogicweb' && view.links[0]!.href === SOURCE_URL &&
+      view.links[0]!.href === 'https://github.com/vllogic/logic20web' && view.links[0]!.href === SOURCE_URL &&
       view.links[1]!.href === LICENSE_URL && LICENSE_URL.endsWith('/LICENSE') &&
       view.links[2]!.href === NOTICE_URL && NOTICE_URL.endsWith('/NOTICE.md') &&
       view.links.every((l) => l.href.startsWith('https://') && l.label.length > 0),

@@ -11,7 +11,7 @@
 
 import { t } from './i18n.js';
 
-export const SOURCE_URL = 'https://github.com/sipeed/slogicweb';
+export const SOURCE_URL = 'https://github.com/vllogic/logic20web';
 export const LICENSE_URL = `${SOURCE_URL}/blob/main/LICENSE`;
 export const NOTICE_URL = `${SOURCE_URL}/blob/main/NOTICE.md`;
 export const APP_NAME = 'slogicweb';
