@@ -342,6 +342,8 @@ export const ru: Messages = {
   'diagnostic.device.triggerWidth':
     'ширина программного триггера {width} не совпадает с шириной записи {channels}',
   'diagnostic.device.bulkStatus': 'bulk IN вернул статус «{status}»',
+  'diagnostic.device.unexpectedDevice': 'это USB-устройство не Logic20 (bcdDevice {bcd}, продукт «{product}»)',
+  'diagnostic.device.headerMismatch': 'первый блок данных не соответствует конфигурации (делитель {div}/{expectedDiv}, маска {mask}/{expectedMask}, режим {mode}, захват {capturing})',
   'diagnostic.device.bulkEmpty': 'bulk IN не вернул данных со статусом «ok»',
   'diagnostic.device.consoleBusy':
     'консоль USB недоступна, пока запись идёт или останавливается',

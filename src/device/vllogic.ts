@@ -27,8 +27,10 @@ import {
   UHSIF_DEFAULT_PAYLOAD,
   UHSIF_PAY_MAX,
   UhsifCmd,
+  VLLOGIC_BCD_LOGIC20,
   VLLOGIC_EP_IN,
   VLLOGIC_EP_OUT,
+  VLLOGIC_PRODUCT,
   VLLOGIC_NUM_CHANNELS,
   VLLOGIC_RATES,
   VLLOGIC_THRESHOLD_PRESETS,
@@ -37,8 +39,10 @@ import {
   vllogicBuildLut,
   vllogicDivForRate,
   vllogicMapBuild,
+  vllogicMaxChannels,
   vllogicThresholdToPwm,
   type VllogicChannelMap,
+  type VllogicParserStats,
 } from './vllogicProtocol.js';
 
 /**
@@ -134,9 +138,18 @@ export class VllogicDevice implements Device {
   private targetSamples = 0;
   private onCaptureEnd: (() => void) | null = null;
   private ended = false;
+  private configuredDiv = 0;
+  private configuredMask = 0;
+  private firstBlockChecked = false;
+  private reportedDropBlocks = 0;
+  private dropoutSink: DropoutSink | null = null;
+  /** Bumped by every start; a stopped-but-stuck old read loop must not touch a new one. */
+  private captureEpoch = 0;
 
   /** Pipelined read geometry; see vllogicReadTuning(). */
   readonly readTuning: VllogicReadTuning;
+  /** Parser counters from the last capture, kept after stop() clears the parser. */
+  parserStats: VllogicParserStats | null = null;
   /** Receive-loop counters, reported once per capture. */
   readonly readStats = {
     transfers: 0,
@@ -157,6 +170,17 @@ export class VllogicDevice implements Device {
 
   /** Open and claim interface 0. Interface 1 is the DLDO interface and is never touched. */
   static async open(usb: USBDevice, tuning?: VllogicReadTuning): Promise<VllogicDevice> {
+    // The PID is shared with the USB Sniffer 2 (bcdDevice 0x0602, UHSIF v2.3).
+    // Opening it with the v2.2 parser produces CRC failures and random junk.
+    const bcd = ((usb.deviceVersionMajor & 0xFF) << 8) | (usb.deviceVersionMinor & 0xFF);
+    const known = bcd === VLLOGIC_BCD_LOGIC20 ||
+      (bcd === 0 && usb.productName === VLLOGIC_PRODUCT);
+    if (!known) {
+      throw new DiagnosticError('device.unexpectedDevice', {
+        bcd: `0x${bcd.toString(16).padStart(4, '0')}`,
+        product: usb.productName || '(none)',
+      });
+    }
     try {
       if (!usb.opened) await usb.open();
       // The device is normally already configured by the OS; a second select is a
@@ -211,6 +235,8 @@ export class VllogicDevice implements Device {
     await this.send(UhsifCmd.VbiasPwm0, pwm.pwm0);
     await this.send(UhsifCmd.VbiasPwm1, pwm.pwm1);
     await this.send(UhsifCmd.ModeNormal);
+    this.configuredDiv = div;
+    this.configuredMask = map.mask;
     // The specification requires >= 25 ms of PWM settling before the first sample.
     await delay(CONFIG_SETTLE_MS);
   }
@@ -221,13 +247,16 @@ export class VllogicDevice implements Device {
     onDropout?: DropoutSink,
     options?: CaptureStartOptions,
   ): Promise<void> {
-    void onDropout;
     if (this.running) throw new Error('VLLogic capture already running');
     if (options?.loop) throw new Error('VLLogic captures do not support loop mode yet');
 
     const div = vllogicDivForRate(cfg.samplerate);
     if (div === null) {
       throw new DiagnosticError('device.unsupportedSamplerate', { rate: cfg.samplerate });
+    }
+    const widthLimit = vllogicMaxChannels(cfg.samplerate);
+    if (cfg.channels > widthLimit) {
+      throw new DiagnosticError('device.unsupportedChannels', { channels: cfg.channels });
     }
     const logical: number[] = [];
     for (let channel = 0; channel < cfg.channels; channel++) logical.push(channel);
@@ -250,16 +279,21 @@ export class VllogicDevice implements Device {
     this.ended = false;
     this.stopRequested = false;
     this.running = true;
+    this.firstBlockChecked = false;
+    this.reportedDropBlocks = 0;
+    this.dropoutSink = onDropout ?? null;
     // A payload is 4092 words, so this many snapshots can arrive before a flush.
     const maxSnapshots = Math.max(1, Math.floor(UHSIF_PAY_MAX / map.nchan));
     this.runBuffers = Array.from(
       { length: map.nchan }, () => new Uint32Array(maxSnapshots),
     );
-    this.parser = new VllogicParser(map, (words, snapshots) =>
-      this.acceptBatch(words, snapshots));
+    const epoch = ++this.captureEpoch;
+    this.parser = new VllogicParser(map, (words, snapshots) => {
+      if (epoch === this.captureEpoch) this.acceptBatch(words, snapshots);
+    });
 
     // Arm the IN transfer before START so the first block is not lost to a race.
-    this.loopDone = this.readLoop();
+    this.loopDone = this.readLoop(epoch);
     await this.send(UhsifCmd.Start);
   }
 
@@ -272,6 +306,31 @@ export class VllogicDevice implements Device {
     const map = this.map;
     const sink = this.sink;
     if (!map || !sink || snapshots <= 0) return;
+    const parser = this.parser;
+    if (parser !== null && !this.firstBlockChecked) {
+      const header = parser.lastHeader;
+      if (header !== null) {
+        this.firstBlockChecked = true;
+        if (header.div !== this.configuredDiv || header.mask !== this.configuredMask ||
+            header.mode !== 0 || !header.capturing) {
+          throw new DiagnosticError('device.headerMismatch', {
+            div: header.div,
+            expectedDiv: this.configuredDiv,
+            mask: header.mask.toString(16),
+            expectedMask: this.configuredMask.toString(16),
+            mode: header.mode,
+            capturing: header.capturing ? '1' : '0',
+          });
+        }
+      }
+    }
+    if (parser !== null && parser.stats.dropBlocks > this.reportedDropBlocks) {
+      this.reportedDropBlocks = parser.stats.dropBlocks;
+      // The device swallowed snapshots without placing a marker in the stream.
+      // The exact count is unknown, so report the position with zero length; the
+      // app's dropout sink marks the span and keeps time aligned as far as it can.
+      this.dropoutSink?.(this.emittedSamples, 0);
+    }
     // Pipelined reads can deliver buffers that straddle the sample limit. Keep whole
     // snapshots only, so the sink still commits a 32-sample multiple.
     if (this.targetSamples > 0) {
@@ -314,7 +373,7 @@ export class VllogicDevice implements Device {
    *
    * This is the WebUSB form of libsigrok's 16 x 256 KiB URB ring (vllogic.h:34-35).
    */
-  private async readLoop(): Promise<void> {
+  private async readLoop(epoch: number): Promise<void> {
     const { bytes: readBytes, depth } = this.readTuning;
     const stats = this.readStats;
     stats.transfers = 0;
@@ -326,6 +385,7 @@ export class VllogicDevice implements Device {
     stats.startedAt = performance.now();
     stats.reported = false;
 
+    const alive = (): boolean => epoch === this.captureEpoch;
     const completed = new Map<number, CompletedRead>();
     const inFlight = new Set<Promise<void>>();
     let nextSequence = 0;
@@ -343,7 +403,7 @@ export class VllogicDevice implements Device {
       (this.targetSamples === 0 || this.emittedSamples < this.targetSamples);
 
     const arm = (): void => {
-      if (closed || inFlight.size >= depth || !wantsMore()) return;
+      if (closed || !alive() || inFlight.size >= depth || !wantsMore()) return;
       const sequence = submitted++;
       const startedAt = performance.now();
       stats.transfers += 1;
@@ -364,7 +424,7 @@ export class VllogicDevice implements Device {
           const completedAt = performance.now();
           const bytes = result.status === 'ok' && result.data ? result.data.byteLength : 0;
           stats.bytes += bytes;
-          if (bytes > 0 && bytes < readBytes) stats.shortReads += 1;
+          if (bytes > 0 && bytes < 4096) stats.shortReads += 1;
           stats.sumTransferMs += completedAt - startedAt;
           stats.maxTransferMs = Math.max(stats.maxTransferMs, completedAt - startedAt);
           stats.peakInFlight = Math.max(stats.peakInFlight, inFlight.size + 1);
@@ -391,6 +451,7 @@ export class VllogicDevice implements Device {
 
     try {
       for (;;) {
+        if (!alive()) break;
         while (!completed.has(nextSequence)) {
           if (inFlight.size === 0 || !this.running) break;
           await new Promise<void>((resolve) => { wake = resolve; });
@@ -416,18 +477,24 @@ export class VllogicDevice implements Device {
       if (!this.stopRequested) failure = e;
     } finally {
       closed = true;
-      this.running = false;
+      // A read loop that outlived stop() by more than its settle window belongs to an
+      // older capture. It must not clear the new capture's running flag, publish its
+      // end or overwrite its statistics.
+      const current = epoch === this.captureEpoch;
+      if (current) this.running = false;
       // The device has been (or is being) stopped, so outstanding reads complete as
       // short reads. Bound the wait: a wedged board must not keep the loop alive.
       await Promise.race([Promise.allSettled([...inFlight]), delay(STOP_SETTLE_MS)]);
+      if (!current) return;
       this.parser?.finish();
+      this.parserStats = this.parser?.stats ?? null;
       this.reportReadStats();
       if (failure === undefined && this.targetSamples > 0 &&
           this.emittedSamples >= this.targetSamples) {
         this.endOnce();
       }
     }
-    if (failure !== undefined) {
+    if (failure !== undefined && epoch === this.captureEpoch) {
       this.onError?.(failure);
       throw failure;
     }
@@ -448,6 +515,14 @@ export class VllogicDevice implements Device {
       `max ${stats.maxTransferMs.toFixed(1)} ms, short ${stats.shortReads}, ` +
       `inflight peak ${stats.peakInFlight}/${this.readTuning.depth}`,
     );
+    const p = this.parserStats;
+    if (p) {
+      console.info(
+        `[vllogic] payload=${p.payloadWords} junk=${p.junkBytes} crcFail=${p.crcFail} ` +
+        `badLen=${p.badLen} maskMismatch=${p.maskMismatch} drop=${p.dropBlocks} ` +
+        `seqJumps=${p.seqJumps} partial=${p.partialSnapshots}`,
+      );
+    }
   }
 
   private endOnce(): void {
@@ -475,6 +550,7 @@ export class VllogicDevice implements Device {
     this.sink = null;
     this.map = null;
     this.parser = null;
+    this.dropoutSink = null;
   }
 
   terminate(): void {

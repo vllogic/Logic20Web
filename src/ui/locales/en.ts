@@ -350,6 +350,8 @@ export const en = {
   'diagnostic.device.triggerWidth':
     'software trigger width {width} does not match capture width {channels}',
   'diagnostic.device.bulkStatus': 'bulk IN returned status "{status}"',
+  'diagnostic.device.unexpectedDevice': 'this USB device is not a Logic20 (bcdDevice {bcd}, product "{product}")',
+  'diagnostic.device.headerMismatch': 'the first data block does not match the configuration (div {div}/{expectedDiv}, mask {mask}/{expectedMask}, mode {mode}, capturing {capturing})',
   'diagnostic.device.bulkEmpty': 'bulk IN returned no data with status "ok"',
   'diagnostic.device.consoleBusy':
     'USB console is unavailable while a capture is running or stopping',

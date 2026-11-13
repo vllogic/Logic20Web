@@ -299,6 +299,20 @@ export interface VllogicParserStats {
   snapshots: number;
   junkBytes: number;
   dropBlocks: number;
+  seqJumps: number;
+  partialSnapshots: number;
+}
+
+/** Fields of the last CRC-valid data block, for the transport's first-block check. */
+export interface VllogicBlockHeader {
+  readonly div: number;
+  readonly mask: number;
+  readonly mode: number;
+  readonly capturing: boolean;
+  readonly lutCheck: number;
+  readonly drop: boolean;
+  readonly seq: number;
+  readonly payloadWords: number;
 }
 
 /**
@@ -317,7 +331,12 @@ export class VllogicParser {
   readonly stats: VllogicParserStats = {
     blocks: 0, acks: 0, dataBlocks: 0, crcFail: 0, badLen: 0,
     maskMismatch: 0, payloadWords: 0, snapshots: 0, junkBytes: 0, dropBlocks: 0,
+    seqJumps: 0, partialSnapshots: 0,
   };
+
+  /** The most recent CRC-valid data block header, or null before the first one. */
+  lastHeader: VllogicBlockHeader | null = null;
+  private lastSeq: number | null = null;
 
   private state: 0 | 1 | 2 = 0;
   private readonly hdr = new Uint8Array(UHSIF_HDR_SIZE);
@@ -421,6 +440,7 @@ export class VllogicParser {
   /** End of stream: publish complete snapshots, drop a partial one. */
   finish(): void {
     this.flushBatch();
+    if (this.batchWords > 0) this.stats.partialSnapshots += 1;
     this.batchWords = 0;
     this.batchSnapshots = 0;
     this.hdrLen = 0;
@@ -488,6 +508,21 @@ export class VllogicParser {
     const drop = ((w2 >>> 22) & 1) !== 0;
     if (drop && !this.dropActive) this.stats.dropBlocks++;
     this.dropActive = drop;
+    const seq = (w3 >>> 24) & 0xFF;
+    if (this.lastSeq !== null && seq !== ((this.lastSeq + 1) & 0xFF)) {
+      this.stats.seqJumps += 1;
+    }
+    this.lastSeq = seq;
+    this.lastHeader = {
+      div: (w2 >>> 15) & 0x7F,
+      mask: w1 & 0xFFFFF,
+      mode: (w3 >>> 10) & 3,
+      capturing: ((w2 >>> 23) & 1) !== 0,
+      lutCheck: (w2 >>> 24) & 0xFF,
+      drop,
+      seq,
+      payloadWords: plen,
+    };
     if ((w1 & 0xFFFFF) !== this.map.mask) {
       this.stats.maskMismatch++;
       this.batchWords = 0;

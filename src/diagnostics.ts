@@ -86,6 +86,8 @@ export const DIAGNOSTIC_CODES = [
   'device.coalescePacket',
   'device.triggerWidth',
   'device.bulkStatus',
+  'device.unexpectedDevice',
+  'device.headerMismatch',
   'device.bulkEmpty',
   'device.consoleBusy',
   'device.notOpen',

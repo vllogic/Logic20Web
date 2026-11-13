@@ -347,6 +347,8 @@ export const fr: Messages = {
   'diagnostic.device.triggerWidth':
     'la largeur du déclencheur logiciel {width} ne correspond pas à la largeur de capture {channels}',
   'diagnostic.device.bulkStatus': 'bulk IN a renvoyé le statut « {status} »',
+  'diagnostic.device.unexpectedDevice': 'cet appareil USB n’est pas un Logic20 (bcdDevice {bcd}, produit « {product} »)',
+  'diagnostic.device.headerMismatch': 'le premier bloc de données ne correspond pas à la configuration (div {div}/{expectedDiv}, masque {mask}/{expectedMask}, mode {mode}, capture {capturing})',
   'diagnostic.device.bulkEmpty': 'bulk IN n’a renvoyé aucune donnée avec le statut « ok »',
   'diagnostic.device.consoleBusy':
     'la console USB est indisponible pendant une capture en cours ou en cours d’arrêt',

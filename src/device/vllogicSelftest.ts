@@ -51,7 +51,7 @@ function block(
 ): Uint8Array {
   const plen = payload.length;
   const w1 = mask >>> 0;
-  const w2 = (div << 15) >>> 0;
+  const w2 = ((div << 15) | (1 << 23)) >>> 0; // capturing=1
   const w3 = ((plen << 12) | (seq << 24)) >>> 0;
   const crc = vllogicCrc16(w1, w2, w3);
   const w0 = (((corrupt ? crc ^ 0xFFFF : crc) << 16) | UHSIF_BLK_MAGIC16) >>> 0;
@@ -64,6 +64,9 @@ class FakeUsb {
   opened = true;
   readonly productName = 'Logic20';
   readonly serialNumber = 'selftest';
+  deviceVersionMajor = 8;
+  deviceVersionMinor = 0x20;
+  readonly deviceVersionSubminor = 0;
   readonly chunks: Uint8Array[] = [];
   readonly commands: Array<{ cmd: number; param: number }> = [];
   delayMs = 0;
@@ -311,6 +314,55 @@ async function main(): Promise<void> {
         defaults.bytes === 256 * 1024 && defaults.depth === 8,
       `override=${JSON.stringify(overridden)} rejected=${JSON.stringify(rejected)} ` +
         `defaults=${JSON.stringify(defaults)}`,
+    );
+  }
+
+  {
+    const fake = new FakeUsb();
+    fake.deviceVersionMajor = 0x06;
+    fake.deviceVersionMinor = 0x02;
+    let code = '';
+    try {
+      await VllogicDevice.open(fake as unknown as USBDevice);
+    } catch (e) {
+      code = (e as { code?: string }).code ?? '';
+    }
+    check(
+      'a Sniffer2 bcdDevice is rejected before claiming',
+      code === 'device.unexpectedDevice',
+      `code=${code}`,
+    );
+  }
+
+  {
+    const fake = new FakeUsb();
+    const payload: number[] = [];
+    for (let s = 0; s < 30; s++) {
+      for (let c = 0; c < 4; c++) payload.push(((s * 0x9E3779B1) ^ c) >>> 0);
+    }
+    // The device was configured for div 120 (20 MHz), but the first block says 60.
+    fake.chunks.push(block(0xF, 60, 1, payload));
+    const device = await VllogicDevice.open(fake as unknown as USBDevice);
+    const mismatchStore = new PlanarSampleStore({ channelCount: 4, samplerate: 20e6 });
+    let error: unknown = null;
+    device.onError = (e) => { error = e; };
+    await device.startChannelMajor(
+      { channels: 4, samplerate: 20e6, thresholdVolts: 1.65 },
+      {
+        begin: (chs) => mismatchStore.beginFrame(chs),
+        channel: (ch, start, words) => mismatchStore.appendChannel(ch, start, words),
+        commit: (samples) => mismatchStore.commitSamples(samples),
+      },
+      undefined,
+      { deviceSampleLimit: 30 * 32 },
+    );
+    for (let i = 0; i < 50 && error === null; i++) await new Promise((r) => setTimeout(r, 10));
+    await device.stop();
+    const code = (error as { code?: string } | null)?.code ?? 'none';
+    check(
+      'a first block with the wrong divider is rejected',
+      code === 'device.headerMismatch',
+      `code=${code}`,
     );
   }
 

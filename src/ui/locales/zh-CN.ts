@@ -309,6 +309,8 @@ export const zhCN: Messages = {
   'diagnostic.device.coalescePacket': 'coalesceBytes {bytes} 不是 {packet} 字节样本大小的整数倍',
   'diagnostic.device.triggerWidth': '软件触发宽度 {width} 与采集宽度 {channels} 不匹配',
   'diagnostic.device.bulkStatus': '批量 IN 传输返回状态“{status}”',
+  'diagnostic.device.unexpectedDevice': '此 USB 设备不是 Logic20（bcdDevice {bcd}，产品“{product}”）',
+  'diagnostic.device.headerMismatch': '首个数据块与配置不符（分频 {div}/{expectedDiv}，通道掩码 {mask}/{expectedMask}，模式 {mode}，采集中 {capturing}）',
   'diagnostic.device.bulkEmpty': '批量 IN 传输在状态“ok”下没有返回数据',
   'diagnostic.device.consoleBusy': '采集运行或停止期间无法使用 USB 控制台',
   'diagnostic.device.notOpen': '设备未打开',
