@@ -1,8 +1,14 @@
-# Cloudflare Pages project metadata.
+# Cloudflare Workers static-assets deployment.
 #
-# Git integration reads the build command and output directory from the Pages
-# dashboard; this file keeps `npx wrangler pages deploy dist` (and local
-# `wrangler pages dev dist`) pointed at the same project.
+# Workers Builds uses these defaults:
+#   build command:   npm run build
+#   deploy command:  npx wrangler deploy
+#   preview command: npx wrangler preview
+#
+# `npm run build` runs the prebuild hook, which vendors Pyodide and the sigrok
+# decoder tree on a fresh checkout, then builds dist/ at the domain root.
 name = "logic20web"
-pages_build_output_dir = "dist"
 compatibility_date = "2026-11-13"
+
+[assets]
+directory = "./dist"

@@ -16,6 +16,10 @@ __pycache__/
 certs/
 tmp/
 
+# Wrangler local state and secrets
+.wrangler/
+.dev.vars
+
 .agents/
 .codex/
 .gitattributes

@@ -428,9 +428,11 @@ const portableAssets = portable ? {
 } : null;
 
 export default defineConfig({
-  // Asset URLs remain portable when dist/ is hosted below a path. The entry itself is
-  // inlined after build so it also works from file://.
-  base: './',
+  // A hosted build lives at the domain root (Cloudflare Workers/Pages custom domain):
+  // the decode worker resolves Pyodide/decoders from BASE_URL, and a relative base
+  // would resolve inside its blob worker. The portable single-file build is opened
+  // from file://, where every URL must stay relative.
+  base: portable ? './' : '/',
   server: lanServer(5173),
   preview: lanServer(5174),
 
