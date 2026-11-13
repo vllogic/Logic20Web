@@ -38,6 +38,7 @@ const entries = [
   'src/data/opfsRecordSelftest.ts',
   'src/data/opfsStorageSelftest.ts',
   'src/data/recordControllerSelftest.ts',
+  'src/data/channelMajorCoalescerSelftest.ts',
   'src/dsp/triggerPlanSelftest.ts',
   'src/dsp/captureTriggerPlanSelftest.ts',
   'src/dsp/measurementsSelftest.ts',

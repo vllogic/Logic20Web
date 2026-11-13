@@ -17,6 +17,7 @@ import { DROP_FRONT_QUANTUM, type SampleStore } from '../data/types.js';
 import {
   bytesPerSampleForChannels, channelWidthForProbes, isChannelCount, type ChannelCount,
 } from '../types.js';
+import { ChannelMajorCoalescer, displayBatchSamples } from '../data/channelMajorCoalescer.js';
 import { DiagnosticError, diagnosticOf } from '../diagnostics.js';
 import {
   MAX_SAMPLERATE_HZ, SAMPLERATES_HZ, TransportDeadError, getGrantedDevicesOnBestThread,
@@ -6503,6 +6504,9 @@ export class App {
         this.analogScanner?.resetContinuity();
         if (store.length >= this.captureLimitSamples) this.captureFilled();
       };
+      // Filled by the channel-major branch; onEnd may fire before startChannelMajor
+      // returns, so the tail batch has to be publishable from there.
+      let coalescerRef: ChannelMajorCoalescer | null = null;
       const startOptions: CaptureStartOptions = softwareTrigger ? {
         // A loop capture windows the triggered stream downstream of the trigger: the
         // trigger's budget is unbounded (maxSamples Infinity), the store drops the
@@ -6631,6 +6635,7 @@ export class App {
         // device error (HSync semantics).
         ...(isLoop ? { loop: true } : { deviceSampleLimit: this.captureLimitSamples }),
         onEnd: () => {
+          coalescerRef?.flush();
           if (generation !== this.captureGeneration) return;
           if (this.running) this.captureFilled();
         },
@@ -6644,17 +6649,20 @@ export class App {
           appendChannel?: (channel: number, startSample: number, words: Uint32Array) => void;
           commitSamples?: (samples: number) => void;
         };
-        await device.startChannelMajor(cfg, {
-          begin: (channels) => channelStore.beginFrame?.(channels),
-          channel: (channel, startSample, words) => {
-            channelStore.appendChannel?.(channel, startSample, words);
-          },
-          commit: (samples) => {
-            channelStore.commitSamples?.(samples);
+        const coalescer = new ChannelMajorCoalescer(
+          channelStore,
+          displayBatchSamples(cfg.samplerate),
+          (samples) => {
             this.captureBytes += samples * bytesPerSampleForChannels(cfg.channels);
             this.livePending = true;
           },
-        }, undefined, startOptions);
+        );
+        coalescerRef = coalescer;
+        await device.startChannelMajor(cfg, coalescer, undefined, startOptions);
+        // onEnd normally flushed already; this is idempotent and covers a stop that
+        // bypassed the end callback.
+        coalescer.flush();
+        coalescerRef = null;
       } else {
         await device.start(cfg, interleavedSink, dropoutSink, startOptions);
       }
