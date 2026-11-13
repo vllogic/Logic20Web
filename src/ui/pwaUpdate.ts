@@ -64,6 +64,7 @@ let reloading = false;
 export function applyUpdate(): void {
   const worker = waiting;
   if (!worker || reloading) return;
+  hideNotice();
   reloading = true;
   navigator.serviceWorker.addEventListener('controllerchange', () => location.reload(), { once: true });
   worker.postMessage({ type: 'SKIP_WAITING' });
@@ -72,6 +73,29 @@ export function applyUpdate(): void {
 }
 
 let notice: HTMLDivElement | null = null;
+/**
+ * The notice is a first-look hint, not a permanent fixture: it hides after 3 s while the
+ * toolbar update command stays `ready`, so the update is still one click away without
+ * covering the plot for the rest of the session.
+ */
+const NOTICE_AUTO_HIDE_MS = 3000;
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function hideNotice(): void {
+  if (noticeTimer !== null) {
+    clearTimeout(noticeTimer);
+    noticeTimer = null;
+  }
+  if (notice) notice.hidden = true;
+}
+
+function scheduleNoticeHide(): void {
+  if (noticeTimer !== null) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    noticeTimer = null;
+    if (notice) notice.hidden = true;
+  }, NOTICE_AUTO_HIDE_MS);
+}
 
 /**
  * The toolbar update command (index.html #btn-update). It stays grey and inert until a
@@ -125,7 +149,7 @@ function renderNotice(): void {
   later.type = 'button';
   later.className = 'update-notice-later';
   later.textContent = t('update.later');
-  later.addEventListener('click', () => { if (notice) notice.hidden = true; });
+  later.addEventListener('click', hideNotice);
   notice.append(text, reload, later);
 }
 
@@ -144,6 +168,7 @@ function showNotice(): void {
   }
   renderNotice();
   notice.hidden = false;
+  scheduleNoticeHide();
 }
 
 function markWaiting(worker: ServiceWorker): void {

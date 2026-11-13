@@ -262,6 +262,14 @@ try {
       updateWiringSource.includes("if (state === 'ready') applyUpdate();"),
     `markup=${updateMarkup.length > 0}, grey=${updateMarkup.includes('aria-disabled="true"')}, ` +
     `wire=${updateWiringSource.includes("document.getElementById('btn-update')")}`);
+
+  check('the update card auto-hides after 3 s while the toolbar command stays ready',
+    updateWiringSource.includes('const NOTICE_AUTO_HIDE_MS = 3000;') &&
+      updateWiringSource.includes('scheduleNoticeHide();') &&
+      updateWiringSource.includes('notice.hidden = true;') &&
+      updateWiringSource.includes("later.addEventListener('click', hideNotice);") &&
+      updateWiringSource.includes('  hideNotice();\n  reloading = true;'),
+    'card timer + later + applyUpdate all clear the card');
 }
 
 // ---------------------------------------------------------------------- report
