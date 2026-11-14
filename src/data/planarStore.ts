@@ -187,6 +187,65 @@ export class PlanarSampleStore implements SampleStore {
     }
   }
 
+  /**
+   * Allocate base and pyramid storage for `samples` samples up front.
+   *
+   * A capture whose length is known before the stream starts should call this: base
+   * planes grow in 2 MiB blocks per channel, and at 320 MB/s that is a fresh block
+   * every few milliseconds, which is enough allocation to trigger a GC pause long
+   * enough to overflow the device FIFO. Reserving turns mid-capture growth into plain
+   * writes to memory that already exists.
+   */
+  reserveSamples(samples: number): void {
+    if (!Number.isInteger(samples) || samples <= 0) return;
+    const end = samples + this.baseSkew;
+    for (const plane of this.base) plane.reserve(end);
+    for (let k = 1; k <= MAX_LEVEL; k++) {
+      const bins = Math.ceil(samples / this.binSize[k]!) + 1;
+      for (const plane of this.hi[k]!) plane.reserve(bins);
+      for (const plane of this.lo[k]!) plane.reserve(bins);
+    }
+  }
+
+  /**
+   * Empty the capture while keeping every allocated block.
+   *
+   * A repeated capture reuses the same store: reallocating 160 MB per wave leaves the
+   * old store for the GC to collect during the next stream, and those pauses are long
+   * enough to overflow the device FIFO. The block arrays stay; only the bookkeeping
+   * (bits/head/length/pyramid) is reset, and the next append overwrites the old bits.
+   */
+  reset(): void {
+    if (this.pending) {
+      throw new Error('reset() called while a channel-major frame is uncommitted');
+    }
+    for (const plane of this.base) {
+      plane.bits = 0;
+      plane.head = 0;
+    }
+    this.length = 0;
+    this.droppedTotal = 0;
+    this.baseOrigin = 0;
+    this.baseSkew = 0;
+    this.gapList = [];
+    this.validBins[0] = 0;
+    this.levelHead[0] = 0;
+    for (let k = 1; k <= MAX_LEVEL; k++) {
+      for (const plane of this.hi[k]!) {
+        plane.bits = 0;
+        plane.head = 0;
+      }
+      for (const plane of this.lo[k]!) {
+        plane.bits = 0;
+        plane.head = 0;
+      }
+      this.validBins[k] = 0;
+      this.levelHead[k] = 0;
+    }
+    this.pendingExpected.fill(false);
+    this.pendingWritten.fill(0);
+  }
+
   // ---------------------------------------------------------------- append
 
   append(chunk: Uint8Array): void {

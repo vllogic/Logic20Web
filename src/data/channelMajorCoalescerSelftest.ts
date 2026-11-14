@@ -48,6 +48,36 @@ function run(batch: number, blocks: number) {
 }
 
 {
+  // Reserve before the stream: the store must accept appends into preallocated
+  // planes without changing what it publishes.
+  const store = new PlanarSampleStore({ channelCount: 4, samplerate: 20e6 });
+  store.reserveSamples(1024);
+  const words = new Uint32Array(1).fill(0xAAAAAAAA);
+  store.beginFrame([0, 1, 2, 3]);
+  for (let c = 0; c < 4; c++) store.appendChannel(c, 0, words);
+  store.commitSamples(32);
+  check('reserveSamples preallocates without changing the published samples',
+    store.length === 32 && store.sampleAt(0, 0) === 0 && store.sampleAt(0, 1) === 1 &&
+      store.sampleAt(3, 31) === 1,
+    `length=${store.length} b0=${store.sampleAt(0, 0)} b1=${store.sampleAt(0, 1)}`);
+}
+
+{
+  const store = new PlanarSampleStore({ channelCount: 4, samplerate: 20e6 });
+  store.reserveSamples(256);
+  const chunk = new Uint8Array(64).fill(0x0F);
+  store.append(chunk);
+  const firstLength = store.length;
+  store.reset();
+  const empty = store.length;
+  store.append(chunk);
+  check('reset empties a store while keeping its allocation usable',
+    firstLength === 64 && empty === 0 && store.length === 64 &&
+      store.sampleAt(0, 0) === 1 && store.sampleAt(3, 63) === 1,
+    `first=${firstLength} empty=${empty} again=${store.length}`);
+}
+
+{
   const { store, commits, payloads } = run(32, 3);
   const ordered = payloads.every((words, b) =>
     store.sampleAt(0, b * 32) === (words[0]! & 1) &&
