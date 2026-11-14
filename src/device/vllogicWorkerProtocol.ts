@@ -29,7 +29,9 @@ export type VllogicToWorker =
   | { kind: 'open'; filter: VllogicDeviceFilter; tuning: VllogicReadTuning }
   | { kind: 'start'; cfg: CaptureConfig; deviceSampleLimit: number }
   | { kind: 'stop' }
-  | { kind: 'terminate' };
+  | { kind: 'terminate' }
+  /** The page finished with batch `id`'s buffer; it is transferred back for reuse. */
+  | { kind: 'ack'; id: number; buffer: ArrayBuffer };
 
 /** Receive-loop counters, cloned out of the worker for the page's `[vllogic]` line. */
 export interface VllogicReadStatsMessage {
@@ -51,6 +53,8 @@ export interface VllogicReadStatsMessage {
  */
 export interface VllogicBatchMessage {
   kind: 'batch';
+  /** Echoed in the ack that returns the buffer to the worker's pool. */
+  id: number;
   channels: number[];
   startSample: number;
   buffer: ArrayBuffer;

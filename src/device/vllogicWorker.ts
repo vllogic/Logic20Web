@@ -26,6 +26,14 @@ const scope = self as unknown as DedicatedWorkerGlobalScope;
 
 let device: VllogicDevice | null = null;
 let coalescer: ChannelMajorCoalescer | null = null;
+/**
+ * Batch buffers returned by the page. Without the pool the worker would allocate 2.66 MB
+ * every 8.33 ms (320 MB/s) and leave it for its own GC, which shares the event loop with
+ * the reads it is protecting.
+ */
+const pool: ArrayBuffer[] = [];
+let nextBatchId = 1;
+let batchBytes = 0;
 
 function post(message: VllogicFromWorker, transfer: Transferable[] = []): void {
   scope.postMessage(message, transfer);
@@ -63,7 +71,13 @@ function sender(): ChannelMajorTarget {
     commitSamples: (samples) => {
       let total = 0;
       for (const entry of pending) total += entry.words.length;
-      const buffer = new ArrayBuffer(total * 4);
+      const need = total * 4;
+      // Prefer a buffer the page has already returned; allocating 2.66 MB per frame is
+      // what put the worker's GC on the read loop's critical path.
+      let buffer = pool.pop();
+      if (!buffer || buffer.byteLength < need) {
+        buffer = new ArrayBuffer(Math.max(need, batchBytes));
+      }
       const out = new Uint32Array(buffer);
       const offsets: number[] = [];
       const lengths: number[] = [];
@@ -76,6 +90,7 @@ function sender(): ChannelMajorTarget {
       }
       const message: VllogicBatchMessage = {
         kind: 'batch',
+        id: nextBatchId++,
         channels: pending.map((entry) => entry.channel),
         startSample,
         buffer,
@@ -83,13 +98,17 @@ function sender(): ChannelMajorTarget {
         lengths,
         samples,
       };
-      // One transferable per frame: the page owns it, the worker allocates the next.
+      // One transferable per frame: the page owns it, and returns it with an ack. The
+      // `buffer` here is freshly allocated because `pending` holds views into the
+      // coalescer's buffers; the ack lets the next frame reuse this allocation.
       post(message, [buffer]);
     },
   };
 }
 
-async function handle(message: Exclude<VllogicToWorker, { kind: 'terminate' }>): Promise<void> {
+async function handle(
+  message: Exclude<VllogicToWorker, { kind: 'terminate' } | { kind: 'ack' }>,
+): Promise<void> {
   switch (message.kind) {
     case 'open': {
       const all = await navigator.usb.getDevices();
@@ -115,6 +134,11 @@ async function handle(message: Exclude<VllogicToWorker, { kind: 'terminate' }>):
       if (!device) throw new Error('start before open');
       const running = device;
       const frame = displayBatchSamples(message.cfg.samplerate, 120);
+      batchBytes = Math.ceil(frame / 32) * message.cfg.channels * 4;
+      // A new geometry invalidates the pooled sizes; eight frames is ~66 ms of page
+      // slack, after which the worker starts allocating again.
+      pool.length = 0;
+      for (let i = 0; i < 8; i++) pool.push(new ArrayBuffer(batchBytes));
       const sink = new ChannelMajorCoalescer(sender(), frame);
       coalescer = sink;
       await running.startChannelMajor(
@@ -165,6 +189,11 @@ async function handle(message: Exclude<VllogicToWorker, { kind: 'terminate' }>):
 
 scope.onmessage = (event: MessageEvent<VllogicToWorker>) => {
   const message = event.data;
+  if (message.kind === 'ack') {
+    pool.push(message.buffer);
+    if (pool.length > 16) pool.length = 16;
+    return;
+  }
   if (message.kind === 'terminate') {
     void (async () => {
       if (device) {

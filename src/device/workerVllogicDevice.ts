@@ -225,6 +225,12 @@ export class WorkerVllogicDevice implements Device {
         } catch (error) {
           this.fail(error instanceof Error ? error : new Error(String(error)));
         }
+        // Hand the buffer back: the worker reuses it instead of allocating 2.66 MB per
+        // frame, and the view above is no longer needed once the store has the words.
+        this.worker.postMessage(
+          { kind: 'ack', id: message.id, buffer: message.buffer } satisfies VllogicToWorker,
+          [message.buffer],
+        );
         return;
       }
       case 'dropout':
