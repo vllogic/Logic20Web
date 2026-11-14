@@ -818,6 +818,7 @@ export const zhCN: Messages = {
   'about.source': '源代码',
   'about.licenseLink': '许可证（GNU GPL v3）',
   'about.notice': '第三方声明（sigrok 解码器）',
+  'about.offline': '下载离线单文件版',
   'settings.language': '语言',
   'settings.theme': '主题',
   'settings.close': '关闭',

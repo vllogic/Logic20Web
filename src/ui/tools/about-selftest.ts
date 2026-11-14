@@ -8,7 +8,7 @@
  */
 
 import {
-  aboutView, buildIdentity, COPYRIGHT, LICENSE_URL, NOTICE_URL, SOURCE_URL,
+  aboutView, buildIdentity, COPYRIGHT, LICENSE_URL, NOTICE_URL, RELEASES_URL, SOURCE_URL,
 } from '../about.js';
 import type { MessageKey } from '../i18n.js';
 import { en } from '../locales/en.js';
@@ -87,11 +87,14 @@ function aboutPane(settingsWindow: string, app: string, about: string): boolean 
       view.copyright === '© 2026 Sipeed Co., Ltd.' && COPYRIGHT === view.copyright &&
       !('title' in view) && !('close' in view),
     JSON.stringify(view));
-  check('the About links are the source repository, its LICENSE and NOTICE.md (third-party decoders)',
-    view.links.length === 3 &&
+  check('the About links are the source repository, its LICENSE, NOTICE.md and the offline release',
+    view.links.length === 4 &&
       view.links[0]!.href === 'https://github.com/vllogic/logic20web' && view.links[0]!.href === SOURCE_URL &&
       view.links[1]!.href === LICENSE_URL && LICENSE_URL.endsWith('/LICENSE') &&
       view.links[2]!.href === NOTICE_URL && NOTICE_URL.endsWith('/NOTICE.md') &&
+      view.links[3]!.href === RELEASES_URL &&
+      RELEASES_URL === `${SOURCE_URL}/releases/latest` &&
+      view.links[3]!.label === en['about.offline'] &&
       view.links.every((l) => l.href.startsWith('https://') && l.label.length > 0),
     JSON.stringify(view.links));
 }
@@ -99,6 +102,7 @@ function aboutPane(settingsWindow: string, app: string, about: string): boolean 
 {
   const keys: MessageKey[] = [
     'about.version', 'about.license', 'about.source', 'about.licenseLink', 'about.notice',
+    'about.offline',
   ];
   const retired = ['settings.about', 'about.title'] as const;
   const catalogs = { 'zh-CN': zhCN, fr, ru } as const;

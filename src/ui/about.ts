@@ -3,7 +3,8 @@
 // Copyright (C) 2026 vllogic.com
 /**
  * Settings > About: app name, version and build id, the licence line and links to the
- * source, the licence text and the third-party notices (the bundled sigrok decoders).
+ * source, the licence text, the third-party notices (the bundled sigrok decoders) and
+ * the offline single-file download.
  *
  * The view is pure data rendered inline by the settings window. The links are plain
  * anchors to the public repository, so the portable single-file build (file://) needs
@@ -15,6 +16,8 @@ import { t } from './i18n.js';
 export const SOURCE_URL = 'https://github.com/vllogic/logic20web';
 export const LICENSE_URL = `${SOURCE_URL}/blob/main/LICENSE`;
 export const NOTICE_URL = `${SOURCE_URL}/blob/main/NOTICE.md`;
+/** Newest GitHub Release: carries both the tag-named .html and .zip offline builds. */
+export const RELEASES_URL = `${SOURCE_URL}/releases/latest`;
 export const APP_NAME = 'logic20web';
 /** Not translated: a legal notice reads the same in every locale. */
 export const COPYRIGHT = '© 2026 Sipeed Co., Ltd.';
@@ -57,6 +60,7 @@ export function aboutView(id: BuildIdentity = buildIdentity()): AboutView {
       { label: t('about.source'), href: SOURCE_URL },
       { label: t('about.licenseLink'), href: LICENSE_URL },
       { label: t('about.notice'), href: NOTICE_URL },
+      { label: t('about.offline'), href: RELEASES_URL },
     ],
   };
 }

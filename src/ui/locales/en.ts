@@ -873,6 +873,7 @@ export const en = {
   'about.source': 'Source code',
   'about.licenseLink': 'License (GNU GPL v3)',
   'about.notice': 'Third-party notices (sigrok decoders)',
+  'about.offline': 'Download offline single-file build',
   'settings.language': 'Language',
   'settings.theme': 'Theme',
   'settings.close': 'Close',

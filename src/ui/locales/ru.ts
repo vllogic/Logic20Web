@@ -863,6 +863,7 @@ export const ru: Messages = {
   'about.source': 'Исходный код',
   'about.licenseLink': 'Лицензия (GNU GPL v3)',
   'about.notice': 'Сторонние уведомления (декодеры sigrok)',
+  'about.offline': 'Скачать автономную версию (один файл)',
   'settings.language': 'Язык',
   'settings.theme': 'Тема',
   'settings.close': 'Закрыть',

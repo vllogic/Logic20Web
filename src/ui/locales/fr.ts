@@ -872,6 +872,7 @@ export const fr: Messages = {
   'about.source': 'Code source',
   'about.licenseLink': 'Licence (GNU GPL v3)',
   'about.notice': 'Mentions tierces (décodeurs sigrok)',
+  'about.offline': 'Télécharger la version hors ligne (fichier unique)',
   'settings.language': 'Langue',
   'settings.theme': 'Thème',
   'settings.close': 'Fermer',
