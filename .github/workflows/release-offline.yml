@@ -1,0 +1,170 @@
+# Copyright (C) 2026 vllogic.com
+# Build the offline single-file Logic20Web app and publish it to a GitHub Release.
+#
+# Trigger: push a tag named `Logic20Web-YYYYMMDD` (the tag is also the asset name).
+#   git tag Logic20Web-20261114 && git push origin Logic20Web-20261114
+#
+# The artifact is the portable build already used by `npm run dist`:
+# index.html contains the UI, Workers, Pyodide WASM/stdlib and the sigrok decoders,
+# and opens from file:// with no server. `npm run check:portable` proves that over
+# file:// in headless Chrome before anything is published.
+name: Release offline single file
+
+on:
+  push:
+    tags:
+      - 'Logic20Web-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (Logic20Web-YYYYMMDD)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: offline-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # Keep in step with .github/workflows/deploy-pages.yml.
+  LIBSIGROKDECODE_REF: master
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Validate the tag name
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^Logic20Web-[0-9]{8}$ ]]; then
+            echo "::error::tag '$TAG' does not match Logic20Web-YYYYMMDD"
+            exit 1
+          fi
+          echo "publishing $TAG"
+
+      - name: Checkout the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Fetch libsigrokdecode decoders
+        run: |
+          git clone --depth 1 --branch "$LIBSIGROKDECODE_REF" \
+            https://github.com/sigrokproject/libsigrokdecode "$RUNNER_TEMP/lsd"
+
+      - name: Build the portable single file
+        run: npm run dist -- "$RUNNER_TEMP/lsd/decoders"
+
+      # The build is only useful if a file:// page can start, decode and run without
+      # fetching a sibling file; the smoke test asserts exactly that.
+      - name: Smoke-test the file:// build
+        run: |
+          CHROMIUM="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)"
+          echo "using $CHROMIUM"
+          CHROMIUM="$CHROMIUM" npm run check:portable
+
+      - name: Package the release assets
+        run: |
+          set -euo pipefail
+          HTML="$TAG.html"
+
+          # Rename the single file to the tag; the HTML itself has no sibling assets.
+          cp dist/index.html "$HTML"
+
+          # GPL/third-party texts must travel with the object code. They sit beside
+          # index.html in the portable build.
+          cp dist/LICENSE.txt LICENSE.txt
+          cp dist/THIRD_PARTY_LICENSES.txt THIRD_PARTY_LICENSES.txt
+
+          sed "s/@TAG@/$TAG/g" <<'EOF' > README-offline.txt
+          Logic20Web offline build — @TAG@
+
+          1. Extract this archive.
+          2. Double-click @TAG@.html (open it in Chrome or Edge).
+          3. Connect the Logic20, click Device, choose the device, then Capture.
+
+          The HTML is a single self-contained file: no server, no Node/npm/Python,
+          and no network access. Keep this README and the licence texts with it if
+          you redistribute the build.
+
+          Browser
+            Chrome or Edge (Chromium). Firefox and Safari cannot use WebUSB.
+
+          Linux
+            If the device is not listed, install the udev rule as root:
+              sudo cp 99-logic20.rules /etc/udev/rules.d/
+              sudo udevadm control --reload-rules && sudo udevadm trigger
+            Then unplug and replug the analyzer. A data cable is required.
+
+          Windows / macOS
+            Normally driverless. Use a USB data cable, not a charge-only cable.
+
+          Updates
+            This offline copy does not update itself. Download the next release to
+            upgrade. The version and build id are shown in Settings > About.
+
+          Licence
+            GPL-3.0-or-later. See LICENSE.txt and THIRD_PARTY_LICENSES.txt.
+            Source: https://github.com/vllogic/Logic20Web
+          EOF
+
+          cat > 99-logic20.rules <<'EOF'
+          # Logic20 (1209:6688) access for desktop users via systemd-logind ACLs.
+          SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="6688", TAG+="uaccess"
+          EOF
+
+          # -j keeps the archive flat: one HTML, the licences, the README and the rule.
+          zip -j "$TAG.zip" "$HTML" LICENSE.txt THIRD_PARTY_LICENSES.txt \
+            README-offline.txt 99-logic20.rules
+
+          sha256sum "$HTML" "$TAG.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+          sed "s/@TAG@/$TAG/g" <<'EOF' > RELEASE-NOTES.md
+          ## Offline single-file build — @TAG@
+
+          **Assets**
+
+          - `@TAG@.html` — the whole app in one file (about 25 MB). Download it and open it in Chrome or Edge.
+          - `@TAG@.zip` — the same HTML plus the licence texts, an offline README and a Linux udev rule.
+          - `SHA256SUMS.txt` — checksums for the two files above.
+
+          **Usage**
+
+          1. Open `@TAG@.html` in Chrome or Edge (extract the zip first if you downloaded that).
+          2. Connect the Logic20, click **Device**, choose the device, then **Capture**.
+
+          No installation, no local server, no Node/npm/Python and no network are needed.
+          Firefox and Safari cannot use WebUSB. This offline copy does not auto-update;
+          download a newer release to upgrade. Version and build id are in **Settings > About**.
+
+          The build is verified from `file://` with `npm run check:portable` before it is published.
+          Licence: GPL-3.0-or-later; see `LICENSE.txt` and `THIRD_PARTY_LICENSES.txt`.
+          EOF
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file RELEASE-NOTES.md
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file RELEASE-NOTES.md
+          fi
+          gh release upload "$TAG" "$TAG.html" "$TAG.zip" SHA256SUMS.txt --clobber
+          gh release view "$TAG" --json url,assets --jq '{url, assets: [.assets[].name]}'
