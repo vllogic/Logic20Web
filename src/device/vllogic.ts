@@ -734,7 +734,12 @@ export class VllogicDevice implements Device {
     const loop = this.loopDone;
     this.loopDone = null;
     if (loop) {
-      await Promise.race([loop.catch(() => undefined), delay(STOP_SETTLE_MS)]);
+      // A finite capture that already delivered its budget has nothing left to wait
+      // for: the board stops sending, so its outstanding reads never complete and the
+      // full settle window would be spent on a read that cannot arrive. A manual stop
+      // keeps the window, because the tail in flight is still worth collecting.
+      const complete = this.targetSamples > 0 && this.emittedSamples >= this.targetSamples;
+      await Promise.race([loop.catch(() => undefined), delay(complete ? 0 : STOP_SETTLE_MS)]);
     }
     this.sink = null;
     this.map = null;

@@ -501,6 +501,35 @@ async function main(): Promise<void> {
   }
 
   {
+    // A finite capture that delivered its budget has nothing left to collect. The
+    // outstanding reads cannot complete after STOP, so stop() must not spend the
+    // settle window on them.
+    const fake = new FakeUsb();
+    const payload = Array.from({ length: 120 }, (_, i) => (0x12340000 | i) >>> 0);
+    fake.chunks.push(block(0xFFFFF, 120, 1, payload));
+    fake.hangWhenEmpty = true;
+    const device = await VllogicDevice.open(fake as unknown as USBDevice, {
+      depth: 2, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0,
+    });
+    let ended = false;
+    await device.startChannelMajor(
+      { channels: 20, samplerate: 20e6, thresholdVolts: 1.65 },
+      { begin: () => {}, channel: () => {}, commit: () => {} },
+      undefined,
+      { deviceSampleLimit: 6 * 32, onEnd: () => { ended = true; } },
+    );
+    for (let i = 0; i < 100 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+    const t0 = performance.now();
+    await device.stop();
+    const stopMs = performance.now() - t0;
+    check(
+      'stop() returns promptly after a finite capture delivered its budget',
+      ended && stopMs < 100,
+      `ended=${ended} stopMs=${stopMs.toFixed(0)}`,
+    );
+  }
+
+  {
     const fake = new FakeUsb();
     fake.hangWhenEmpty = true;
     const device = await VllogicDevice.open(fake as unknown as USBDevice, {

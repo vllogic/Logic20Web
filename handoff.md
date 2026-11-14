@@ -63,6 +63,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
    - 达到 `deviceSampleLimit` 立即 `onEnd`，不等被 Stop 的读队列排空。
    - 首块校验：`div / mask / mode / capturing` 与配置不符直接报 `device.headerMismatch`（ACK 不参与）。
    - 首块看门狗：START 后 1 s 内没有 data block 报 `device.noData`；`stop()` 会唤醒停在等待里的循环。
+   - `stop()` 对“已交付 sample budget”的有限采集立即返回（STOP 后的 pending 读不会完成，等满 750 ms 没有意义）；手动 Stop 仍保留 750 ms settle 收集尾部。
    - START 前排空：`?vllogic-drain=<ms>`（默认 20）；空闲窗口内完成的数据丢弃，窗口后挂起的读作为采集的第 0 条读（预 arm）。实测能把上一轮 STOP 后残留的 ~128 KiB 尾部清掉。
    - 设备身份：接受 bcdDevice `0x0802` 或 `0x0820`，拒绝 Sniffer2 的 `0x0602`。
    - `drop_flag` 边沿通过 dropout sink 上报；`seq` 跳变、`partialSnapshots` 写入 parser stats。
