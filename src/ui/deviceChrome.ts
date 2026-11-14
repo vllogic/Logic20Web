@@ -118,8 +118,9 @@ export function deviceMenuItems(view: DeviceMenuView, actions: DeviceMenuActions
 }
 
 /**
- * The firmware updater. This fork does not ship the Sipeed OTA pages beside the app,
- * so the public page is the one link that always resolves. It asks for its own WebUSB
+ * The firmware updater. The Logic20 fork points at its own OTA page rather than the
+ * Sipeed one; the page is not shipped with the app and is not published yet, so the
+ * link is only wired up for when firmware updates are added. It asks for its own WebUSB
  * grant, and this tab must release the board first (the menu disconnects before opening).
  */
-export const FIRMWARE_UPDATE_URL = 'https://slogic.sipeed.com/ota/';
+export const FIRMWARE_UPDATE_URL = 'https://logic20.vllogic.com/ota/';

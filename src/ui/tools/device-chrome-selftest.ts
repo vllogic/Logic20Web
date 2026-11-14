@@ -231,7 +231,7 @@ check('the browser notice appears only without WebUSB and names HTTPS only for a
       actions.map((a) => a.label).join('|') ===
         [en['deviceMenu.disconnect'], en['deviceMenu.connectAnother'], en['deviceMenu.firmware']].join('|') &&
       picked.join(',') === 'disconnect,another,firmware' &&
-      FIRMWARE_UPDATE_URL === 'https://slogic.sipeed.com/ota/',
+      FIRMWARE_UPDATE_URL === 'https://logic20.vllogic.com/ota/',
     JSON.stringify(items.map((i) => [i.label, i.hint ?? '', i.info === true])));
 }
 
