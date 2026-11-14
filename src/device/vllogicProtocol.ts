@@ -350,6 +350,8 @@ export function vllogicPwmToThreshold(pwm0: number, pwm1: number): number {
 export interface VllogicParserStats {
   blocks: number;
   acks: number;
+  /** Data blocks discarded by the START barrier (a previous capture's tail). */
+  preAckBlocks: number;
   dataBlocks: number;
   crcFail: number;
   badLen: number;
@@ -396,7 +398,7 @@ export interface VllogicBlockHeader {
  */
 export class VllogicParser {
   readonly stats: VllogicParserStats = {
-    blocks: 0, acks: 0, dataBlocks: 0, crcFail: 0, badLen: 0,
+    blocks: 0, acks: 0, preAckBlocks: 0, dataBlocks: 0, crcFail: 0, badLen: 0,
     maskMismatch: 0, payloadWords: 0, snapshots: 0, junkBytes: 0, dropBlocks: 0,
     firstDataDrop: false, dropAtSnapshots: -1, seqJumps: 0, partialSnapshots: 0,
   };
@@ -423,6 +425,15 @@ export class VllogicParser {
    */
   private replay = new Uint8Array(0);
   private dropActive = false;
+  /**
+   * START barrier. WebUSB cannot cancel the previous capture's last transferIn, and at
+   * 20 lanes the tail can still arrive after the pre-START drain. If it carries the same
+   * mask, the parser would treat it as new data; a tail that is not a whole snapshot
+   * then rotates every following snapshot, so a signal on D0 appears on another lane.
+   * Discard data blocks until the board sends an ACK; the new capture's data starts
+   * after the ACK run, on a snapshot boundary.
+   */
+  private awaitingStartAck = false;
   /**
    * Drop the payload of a block whose header mask is not the configured one. Its words
    * belong to another lane set (a stale block from before START, or a misconfigured
@@ -530,6 +541,25 @@ export class VllogicParser {
     }
   }
 
+  /**
+   * Arm the START barrier: drop every data block until the first ACK, then accept data.
+   * Called by the transport before START so a previous capture's tail cannot contribute
+   * samples to the new capture.
+   */
+  armStartBarrier(): void {
+    this.awaitingStartAck = true;
+    this.resetSnapshotPhase();
+    this.carry = new Uint8Array(0);
+    this.replay = new Uint8Array(0);
+    this.hdrLen = 0;
+    this.payRem = 0;
+    this.state = 0;
+    this.discardPayload = false;
+    this.dropActive = false;
+    this.lastSeq = null;
+    this.lastHeader = null;
+  }
+
   /** End of stream: publish complete snapshots, drop a partial one. */
   finish(): void {
     this.resetSnapshotPhase();
@@ -602,6 +632,27 @@ export class VllogicParser {
     }
     this.stats.blocks++;
     const plen = (w3 >>> 12) & 0xFFF;
+    if (this.awaitingStartAck) {
+      if (plen === 0) {
+        this.stats.acks++;
+        this.awaitingStartAck = false;
+        this.resetSnapshotPhase();
+        this.state = 0;
+        return;
+      }
+      if (plen < UHSIF_PAY_MIN || plen > UHSIF_PAY_MAX) {
+        this.stats.badLen++;
+        this.state = 0;
+        return;
+      }
+      // A previous capture's tail, or anything before START is acknowledged. Consume
+      // it without touching the batch, drop/seq statistics or lastHeader.
+      this.stats.preAckBlocks++;
+      this.discardPayload = true;
+      this.payRem = plen;
+      this.state = 2;
+      return;
+    }
     if (plen === 0) {
       this.stats.acks++;
       this.state = 0;

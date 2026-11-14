@@ -73,6 +73,8 @@ class FakeUsb {
   readonly chunks: Uint8Array[] = [];
   /** Blocks the pre-START drain may see; empty means the endpoint is idle. */
   readonly beforeStartChunks: Uint8Array[] = [];
+  /** Same-mask tail served before the START ACK (models a missed drain). */
+  readonly beforeAckChunks: Uint8Array[] = [];
   readonly commands: Array<{ cmd: number; param: number }> = [];
   delayMs = 0;
   varyDelay = false;
@@ -84,6 +86,9 @@ class FakeUsb {
   maxConcurrent = 0;
   private active = 0;
   private started = false;
+  private ackServed = false;
+  private preAckReserved = 0;
+  private parked: Array<() => void> = [];
 
   async open(): Promise<void> {}
   async selectConfiguration(_value: number): Promise<void> {}
@@ -96,7 +101,7 @@ class FakeUsb {
     const cmd = view.getUint32(4, true);
     const param = view.getUint32(8, true);
     this.commands.push({ cmd, param });
-    if (cmd === UhsifCmd.Start) this.started = true;
+    if (cmd === UhsifCmd.Start) { this.started = true; this.ackServed = false; this.preAckReserved = 0; const parked = this.parked.splice(0); for (const wake of parked) wake(); }
     return { status: 'ok', bytesWritten: data.byteLength };
   }
 
@@ -111,10 +116,40 @@ class FakeUsb {
         data: new DataView(stale.buffer, stale.byteOffset, stale.byteLength),
       };
     }
-    // Bind the block at submission time: that is the endpoint's FIFO order, even
-    // though the *completion* may still arrive out of order.
-    const chunk = this.chunks.shift();
-    while (!this.started) await new Promise((resolve) => setTimeout(resolve, 2));
+    // A pre-START read parks until START. The first such read is the START-ACK slot; the
+    // others bind their data chunk now, so submission order stays the endpoint order.
+    let reservedAck = false;
+    let chunk: Uint8Array | undefined;
+    if (!this.started) {
+      // Reserve the first reads for the same-mask tail (if any) and the START ACK; the
+      // remaining calls bind their data chunk now so submission order stays FIFO.
+      if (!this.ackServed && this.preAckReserved < this.beforeAckChunks.length + 1) {
+        this.preAckReserved += 1;
+        reservedAck = true;
+      } else {
+        chunk = this.chunks.shift();
+      }
+      while (!this.started) await new Promise<void>((resolve) => this.parked.push(resolve));
+      if (reservedAck) {
+        const stale = this.beforeAckChunks.shift();
+        if (stale !== undefined) {
+          return { status: 'ok', data: new DataView(stale.buffer, stale.byteOffset, stale.byteLength) };
+        }
+        this.ackServed = true;
+        return {
+          status: 'ok',
+          data: new DataView(block(0xFFFFF, 120, 0, []).buffer),
+        };
+      }
+    } else if (!this.ackServed) {
+      this.ackServed = true;
+      return {
+        status: 'ok',
+        data: new DataView(block(0xFFFFF, 120, 0, []).buffer),
+      };
+    } else {
+      chunk = this.chunks.shift();
+    }
     this.active += 1;
     this.maxConcurrent = Math.max(this.maxConcurrent, this.active);
     try {
@@ -341,6 +376,38 @@ async function main(): Promise<void> {
         tail.length === 120 && tail.every((word, i) => word === next120[i]),
       `snapshots=${recovered} crcFail=${resync.stats.crcFail} ` +
         `partial=${resync.stats.partialSnapshots} tail=${tail.length}`,
+    );
+  }
+
+  // A previous capture's tail can arrive after START with the same mask. The START
+  // barrier must discard it (whatever its snapshot phase) and begin at the ACK.
+  {
+    const stale = block(0xFFFFF, 15, 1, Array.from({ length: 121 }, () => 0xFFFFFFFF));
+    const ack = block(0xFFFFF, 15, 2, []);
+    const good: number[] = [];
+    for (let s = 0; s < 30; s++) {
+      for (let c = 0; c < 20; c++) good.push(c === 0 ? 0 : 0xFFFFFFFF);
+    }
+    const stream = Uint8Array.from([...stale, ...ack,
+      ...block(0xFFFFF, 15, 3, good.slice(0, 120)),
+      ...block(0xFFFFF, 15, 4, good.slice(120))]);
+    const firstSnapshots: number[][] = [];
+    const barrier = new VllogicParser(map, (words, n) => {
+      for (let s = 0; s < n && firstSnapshots.length < 3; s++) {
+        firstSnapshots.push(Array.from(words.subarray(s * 20, (s + 1) * 20)));
+      }
+    });
+    barrier.armStartBarrier();
+    for (let off = 0; off < stream.length; off += 13) {
+      barrier.feed(stream.subarray(off, Math.min(stream.length, off + 13)));
+    }
+    const aligned = firstSnapshots.length === 3 && firstSnapshots.every((snap) =>
+      snap[0] === 0 && snap.slice(1).every((word) => word === 0xFFFFFFFF));
+    check(
+      'the START barrier discards a same-mask tail and keeps snapshot alignment',
+      aligned && barrier.stats.preAckBlocks === 1 && barrier.stats.acks === 1,
+      `snapshots=${firstSnapshots.length} preAck=${barrier.stats.preAckBlocks} ` +
+        `acks=${barrier.stats.acks} first=${firstSnapshots[0]?.slice(0, 4).join(',')}`,
     );
   }
 
@@ -611,6 +678,114 @@ async function main(): Promise<void> {
       code === 'device.channelBandwidth' && error === null &&
         fake.commands.every((command) => command.cmd === UhsifCmd.Stop),
       `code=${code} commands=${fake.commands.map((command) => command.cmd).join(',')}`,
+    );
+  }
+
+  // Every selection shape maps wire words back to the original D numbers: prefixes,
+  // middle banks, high lanes, a sparse mix, and all 20 lanes.
+  {
+    const selections = [
+      [0, 1, 2, 3, 4, 5, 6, 7],
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      [8, 9, 10, 11, 12, 13, 14, 15],
+      [16, 17, 18, 19],
+      [0, 3, 8, 19],
+      [...Array(20).keys()],
+    ];
+    const failures: string[] = [];
+    for (const selected of selections) {
+      const fake = new FakeUsb();
+      const selection = vllogicMapBuild(selected);
+      const snapshots = Math.ceil(120 / selection.nchan) + 1;
+      const perLogical = new Map<number, number[]>();
+      for (const logical of selected) perLogical.set(logical, []);
+      const payload: number[] = [];
+      for (let s = 0; s < snapshots; s++) {
+        const words = new Map<number, number>();
+        for (const logical of selected) {
+          const word = ((logical * 0x01010101) ^ (s * 0x11111111)) >>> 0;
+          words.set(logical, word);
+          perLogical.get(logical)!.push(word);
+        }
+        for (const physical of selection.physList) {
+          payload.push(words.get(selection.phys2log[physical]!)!);
+        }
+      }
+      fake.chunks.push(block(selection.mask, 80, 1, payload));
+      const device = await VllogicDevice.open(
+        fake as unknown as USBDevice,
+        { depth: 2, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+      );
+      const store = new PlanarSampleStore({ channelCount: 20, samplerate: 80e6 });
+      store.setActiveChannels(selected);
+      let ended = false;
+      await device.startChannelMajor(
+        { channels: 20, selectedChannels: selected, samplerate: 80e6, thresholdVolts: 1.65 },
+        {
+          begin: (channels) => store.beginFrame(channels),
+          channel: (channel, start, words) => store.appendChannel(channel, start, words),
+          commit: (samples) => store.commitSamples(samples),
+        },
+        undefined,
+        { deviceSampleLimit: snapshots * 32, onEnd: () => { ended = true; } },
+      );
+      for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+      await device.stop();
+      const exact = ended && store.length === snapshots * 32 &&
+        selected.every((logical) => perLogical.get(logical)!.every((word, s) =>
+          store.sampleAt(logical, s * 32) === (word & 1) &&
+          store.sampleAt(logical, s * 32 + 31) === ((word >>> 31) & 1)));
+      if (!exact) failures.push(`[${selected.join(',')}] len=${store.length}`);
+    }
+    check(
+      'every lane-selection shape keeps the original D numbering end to end',
+      failures.length === 0,
+      failures.length === 0
+        ? `${selections.length} selections exact`
+        : failures.join(' '),
+    );
+  }
+
+  // A same-mask tail that the drain missed must not rotate the new capture.
+  {
+    const fake = new FakeUsb();
+    const snapshots = 10;
+    fake.beforeAckChunks.push(block(0xFFFFF, 30, 1,
+      Array.from({ length: 121 }, () => 0xFFFFFFFF)));
+    const payload: number[] = [];
+    for (let s = 0; s < snapshots; s++) {
+      // Wire order is physical: CH0 (logical 0) is physical lane 1.
+      for (let c = 0; c < 20; c++) payload.push(c === 1 ? 0 : 0xFFFFFFFF);
+    }
+    fake.chunks.push(block(0xFFFFF, 30, 2, payload));
+    const device = await VllogicDevice.open(
+      fake as unknown as USBDevice,
+      { depth: 2, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+    );
+    const store = new PlanarSampleStore({ channelCount: 20, samplerate: 80e6 });
+    store.setActiveChannels([...Array(20).keys()]);
+    let ended = false;
+    await device.startChannelMajor(
+      { channels: 20, selectedChannels: [...Array(20).keys()], samplerate: 80e6, thresholdVolts: 0.6 },
+      {
+        begin: (channels) => store.beginFrame(channels),
+        channel: (channel, start, words) => store.appendChannel(channel, start, words),
+        commit: (samples) => store.commitSamples(samples),
+      },
+      undefined,
+      { deviceSampleLimit: snapshots * 32, onEnd: () => { ended = true; } },
+    );
+    for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+    await device.stop();
+    const aligned = ended && store.length === snapshots * 32 &&
+      Array.from({ length: store.length }, (_, s) => s).every((s) =>
+        store.sampleAt(0, s) === 0 &&
+        Array.from({ length: 19 }, (_, c) => c + 1)
+          .every((c) => store.sampleAt(c, s) === 1));
+    check(
+      'a same-mask tail before the START ACK cannot rotate the capture',
+      aligned && (device.parserStats?.preAckBlocks ?? 0) === 1,
+      `ended=${ended} length=${store.length} preAck=${device.parserStats?.preAckBlocks}`,
     );
   }
 

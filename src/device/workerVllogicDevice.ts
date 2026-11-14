@@ -269,6 +269,7 @@ export class WorkerVllogicDevice implements Device {
           console.info(
             `[vllogic] payload=${p.payloadWords} junk=${p.junkBytes} crcFail=${p.crcFail} ` +
             `badLen=${p.badLen} maskMismatch=${p.maskMismatch} drop=${p.dropBlocks} ` +
+            `preAck=${p.preAckBlocks} ` +
             `dropAtStart=${p.firstDataDrop ? 1 : 0} dropAt=${p.dropAtSnapshots} ` +
             `seqJumps=${p.seqJumps} partial=${p.partialSnapshots}`,
           );

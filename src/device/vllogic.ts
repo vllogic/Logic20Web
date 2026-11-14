@@ -431,6 +431,10 @@ export class VllogicDevice implements Device {
     this.parser = new VllogicParser(map, (words, snapshots) => {
       if (epoch === this.captureEpoch) this.acceptBatch(words, snapshots);
     });
+    // A previous capture's tail may still be queued and can carry the same mask. Drop
+    // every data block until the board acknowledges START; its new stream starts after
+    // the ACK run on a snapshot boundary.
+    this.parser.armStartBarrier();
 
     // Optional pre-START drain: discard whatever the endpoint still holds and hand the
     // read that outlives the idle window to the capture loop as its first in-flight
@@ -787,6 +791,7 @@ export class VllogicDevice implements Device {
       console.info(
         `[vllogic] payload=${p.payloadWords} junk=${p.junkBytes} crcFail=${p.crcFail} ` +
         `badLen=${p.badLen} maskMismatch=${p.maskMismatch} drop=${p.dropBlocks} ` +
+        `preAck=${p.preAckBlocks} ` +
         `dropAtStart=${p.firstDataDrop ? 1 : 0} dropAt=${p.dropAtSnapshots} ` +
         `seqJumps=${p.seqJumps} partial=${p.partialSnapshots}`,
       );
