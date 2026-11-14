@@ -396,12 +396,12 @@ async function main(): Promise<void> {
     );
     const defaults = vllogicReadTuning('');
     check(
-      'read tuning honours safe overrides, rejects unsafe values and defaults to 256 KiB x 8',
+      'read tuning honours safe overrides, rejects unsafe values and defaults to 256 KiB x 16',
       overridden.bytes === 131072 && overridden.depth === 4 && overridden.firstBlockMs === 250 &&
         overridden.drainIdleMs === 20 &&
-        rejected.bytes === 256 * 1024 && rejected.depth === 8 &&
+        rejected.bytes === 256 * 1024 && rejected.depth === 16 &&
         rejected.firstBlockMs === 1000 && rejected.drainIdleMs === 20 &&
-        defaults.bytes === 256 * 1024 && defaults.depth === 8 &&
+        defaults.bytes === 256 * 1024 && defaults.depth === 16 &&
         defaults.firstBlockMs === 1000 && defaults.drainIdleMs === 20,
       `override=${JSON.stringify(overridden)} rejected=${JSON.stringify(rejected)} ` +
         `defaults=${JSON.stringify(defaults)}`,

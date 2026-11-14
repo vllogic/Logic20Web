@@ -50,12 +50,16 @@ import {
  * Read geometry. libsigrok's vllogic driver keeps 16 x 256 KiB IN URBs in flight
  * (libsigrok/src/hardware/vllogic-logic/vllogic.h:34-35). WebUSB has no URB ring, but
  * the rule is the same: the endpoint must always have a read queued, or the device's
- * FIFO backs up and the whole capture stretches. 8 x 256 KiB = 2 MiB in flight is the
+ * FIFO backs up and the whole capture stretches. 16 x 256 KiB = 4 MiB in flight is the
  * browser equivalent for the page-thread consumer; override it for bring-up with
  * `?vllogic-read=<bytes>&vllogic-depth=<n>` and compare `[vllogic]` output.
+ *
+ * Measured 2026-11-14 at 16 CH / 160 MHz (320 MB/s, 0.2 s, six cycles each): depth 8
+ * dropped once in 3 of 6 captures, depth 16 in 2 of 6, depth 32 in 1 of 6. 16 is the
+ * middle ground; use `?vllogic-depth=32` for long high-bandwidth runs.
  */
 const DEFAULT_READ_BYTES = 256 * 1024;
-const DEFAULT_READ_DEPTH = 8;
+const DEFAULT_READ_DEPTH = 16;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_READ_DEPTH = 32;
 const CONFIG_SETTLE_MS = 35;

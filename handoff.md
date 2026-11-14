@@ -58,7 +58,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 1. 设备：20 lane，每 lane 每 word 32 samples；一个 snapshot = `nchan` words = 32 个采样时刻。
 2. UHSIF 块：16 B 头 + `payload_len` 个 **32-bit 字**（不是字节！范围 120..4092），总线上一块 16 KiB。
 3. `vllogic.ts`：
-   - 保持 `depth` 条 `transferIn` 同时在飞（默认 8，单次请求 256 KiB；设备实际每 16 KiB 完成一次短读，所以真实缓冲是 `depth × 16 KiB`）。
+   - 保持 `depth` 条 `transferIn` 同时在飞（默认 16，单次请求 256 KiB；设备实际每 16 KiB 完成一次短读，所以真实缓冲是 `depth × 16 KiB` ≈ 256 KiB，与原生 16 URB 一致）。
    - 完成回调**先补发**下一条读，再交给消费者；按提交序号严格排序消费。
    - 达到 `deviceSampleLimit` 立即 `onEnd`，不等被 Stop 的读队列排空。
    - 首块校验：`div / mask / mode / capturing` 与配置不符直接报 `device.headerMismatch`（ACK 不参与）。
@@ -194,10 +194,11 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 
 ### P1（建议下一轮）
 
-1. **用真实硬件复测修复后的采集**
-   - 20 MHz×4CH×1s、16CH@160MHz×0.25s 是否回到标称时长/样本率；
-   - 20CH@160MHz（400 MB/s）下 depth 曲线，确认 `depth×16 KiB` 是否足够；必要时把默认 depth 提到 16/32；
-   - 用 `src/device/bench/drain.html` 跑 4 轮 `drain=0`，确认每轮 stop 都远小于 750 ms、无 maskMismatch/CRC 失败。
+1. **用真实硬件复测修复后的采集**（已完成 2026-11-14，16CH@160MHz）
+   - 合并提交 8.33 ms 时 18 轮均为 320–346 MB/s、effMSa≈160；`crcFail/maskMismatch/seqJumps` 全 0，`stopMs < 6 ms`。
+   - 偶发 `drop=1`：depth 8 为 3/6 轮、depth 16 为 2/6、depth 32 为 1/6；默认 depth 因此从 8 提到 **16**（`?vllogic-depth=32` 用于长时间高带宽）。
+   - pyusb 侧 20 MHz×4CH×1 s 得到 2,553,408 words ≈ 20.4 MSa/s、10.22 MB，确认没有 4 倍问题。
+   - 剩余：20CH@160MHz（400 MB/s）和 100 MHz 默认场景待复测。
 2. ~~START 前 drain IN 端点~~ **已完成（2026-11-14）**
    - pyusb 实测：配置 ACK 不堆积、STOP+FLUSH 后无旧数据块、START 后首块是 ACK；详见 `docs/PROTOCOL-VLLOGIC-LOGIC20.md`。
    - 已实现 `?vllogic-drain=<ms>`（空闲探测 + 预 arm 交接），**默认 20**：页面实测上一轮 STOP 后端点仍有 ~128 KiB 尾部，不开会在下一轮被当成新数据。
