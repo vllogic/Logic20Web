@@ -211,10 +211,12 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
    - 已实现 `?vllogic-drain=<ms>`（空闲探测 + 预 arm 交接），**默认 20**：页面实测上一轮 STOP 后端点仍有 ~128 KiB 尾部，不开会在下一轮被当成新数据。
 3. ~~stop 唤醒 readLoop + 首块超时~~ **已完成（2026-11-14）**
    - `stop()` 调 `wakeLoop`，`loopCompleted` 可观测；`device.noData` 看门狗 1 s（`?vllogic-firstblock=<ms>`）。
-4. **Worker 迁移评估（暂缓）**
-   - depth 64 + 预分配/复用后，bench 页面 0.5 s × 20 轮已 0 drop；Worker 的直接收益（避免丢样）不存在，只剩“减少 20–50 ms 慢帧对采集时长的影响”。
-   - 待办：在**生产 app**（有波形绘制/解码）上跑同样的 160 MHz × 16 CH × 0.5 s，看 `[vllogic] drop=`。若生产 app 仍丢样，再按 `usbWorker` 模式做 channel-major Worker 原型（Worker 内 parser + 8.33 ms 聚合，主线程只写 store），保留 `?vllogic-worker=0` 回退。
-   - 设计要点：Worker 内 `VllogicDevice` + `VllogicParser`，每 ~8.33 ms 把每通道 words 用 transferable 发回；主线程只 `beginFrame/appendChannel/commitSamples`；错误/dropout/ended/stats 走消息。
+4. ~~Worker 迁移~~ **已实现（2026-11-14）**
+   - 生产 app 页面线程实测每轮 `drop=1`、avg 53–56 ms；Worker 后 **约 30 轮 0 drop**、296–318 MB/s。
+   - `vllogicWorker.ts`：Worker 内读泵 + parser + 120 Hz 聚合；`workerVllogicDevice.ts`：页面包装，主线程只写 store。
+   - 每 8.33 ms 一批约 2.66 MB（16CH@160MHz）；**buffer 池 8 个 + 页面 ack 回传**，稳态零分配，避免 Worker GC 与读泵抢事件循环。
+   - `?vllogic-worker=0` 强制回退页面线程；Worker 不可用时自动回退。
+   - 统计注意：`stop` 后仍挂在 Worker 里的 pending 读会拉高 `avg/max`（甚至几十秒），不代表采集问题；看 `drop` 和 `lineMBs`。
 
 ### P2
 
