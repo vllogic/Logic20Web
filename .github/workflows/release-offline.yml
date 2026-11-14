@@ -187,9 +187,12 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$TAG" --notes-file RELEASE-NOTES.md
+            gh release edit "$TAG" --draft=false --title "$TAG" --notes-file RELEASE-NOTES.md
           else
             gh release create "$TAG" --verify-tag --title "$TAG" --notes-file RELEASE-NOTES.md
+            # A tag that was just re-pushed can leave the new release as a draft;
+            # publish it explicitly before uploading assets.
+            gh release edit "$TAG" --draft=false --title "$TAG" --notes-file RELEASE-NOTES.md
           fi
 
           # Keep only this run's three assets: an older release of the same tag may
@@ -202,4 +205,4 @@ jobs:
           done
 
           gh release upload "$TAG" "$HTML" "$ZIP" SHA256SUMS.txt --clobber
-          gh release view "$TAG" --json url,assets --jq '{url, assets: [.assets[].name]}'
+          gh release view "$TAG" --json url,isDraft,assets --jq '"::notice::release " + .url + " draft=" + (.isDraft|tostring) + " assets=" + ([.assets[].name]|join(","))'
