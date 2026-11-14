@@ -211,10 +211,15 @@ export class WorkerVllogicDevice implements Device {
         if (!sink) return;
         try {
           sink.begin?.(message.channels);
+          const words = new Uint32Array(message.buffer);
           for (let i = 0; i < message.channels.length; i++) {
-            const buffer = message.words[i];
-            if (!buffer) continue;
-            sink.channel(message.channels[i]!, message.startSample, new Uint32Array(buffer));
+            const offset = message.offsets[i] ?? 0;
+            const length = message.lengths[i] ?? 0;
+            if (length === 0) continue;
+            sink.channel(
+              message.channels[i]!, message.startSample,
+              words.subarray(offset, offset + length),
+            );
           }
           sink.commit(message.samples);
         } catch (error) {

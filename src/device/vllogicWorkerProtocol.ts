@@ -43,13 +43,19 @@ export interface VllogicReadStatsMessage {
   elapsedMs: number;
 }
 
-/** One coalesced channel-major frame: `words[i]` belongs to `channels[i]`. */
+/**
+ * One coalesced channel-major frame. All channels share one transferred buffer;
+ * `offsets[i]`/`lengths[i]` locate channel `channels[i]`'s words inside it. One allocation
+ * and one transferable per frame instead of one per channel keeps the worker's garbage
+ * out of the read loop's way.
+ */
 export interface VllogicBatchMessage {
   kind: 'batch';
   channels: number[];
   startSample: number;
-  /** One buffer per channel, each 32 samples per word, bit 0 first. */
-  words: ArrayBuffer[];
+  buffer: ArrayBuffer;
+  offsets: number[];
+  lengths: number[];
   samples: number;
 }
 

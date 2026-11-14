@@ -47,31 +47,44 @@ function describeFailure(error: unknown): Extract<VllogicFromWorker, { kind: 'er
 function sender(): ChannelMajorTarget {
   let channels: readonly number[] = [];
   let startSample = 0;
-  let buffers: Uint32Array[] = [];
+  const pending: Array<{ channel: number; words: Uint32Array }> = [];
 
   return {
     beginFrame: (next) => {
       channels = next;
       startSample = 0;
-      buffers = next.map(() => new Uint32Array(0));
+      pending.length = 0;
     },
     appendChannel: (channel, start, words) => {
-      const index = channels.indexOf(channel);
-      if (index < 0) return;
+      if (!channels.includes(channel)) return;
       startSample = start;
-      buffers[index] = words.slice();
+      pending.push({ channel, words });
     },
     commitSamples: (samples) => {
+      let total = 0;
+      for (const entry of pending) total += entry.words.length;
+      const buffer = new ArrayBuffer(total * 4);
+      const out = new Uint32Array(buffer);
+      const offsets: number[] = [];
+      const lengths: number[] = [];
+      let at = 0;
+      for (const entry of pending) {
+        out.set(entry.words, at);
+        offsets.push(at);
+        lengths.push(entry.words.length);
+        at += entry.words.length;
+      }
       const message: VllogicBatchMessage = {
         kind: 'batch',
-        channels: [...channels],
+        channels: pending.map((entry) => entry.channel),
         startSample,
-        words: buffers.map((words) => words.buffer as ArrayBuffer),
+        buffer,
+        offsets,
+        lengths,
         samples,
       };
-      // Transferring hands each frame buffer to the page; the coalescer allocates fresh
-      // ones for the next frame anyway.
-      post(message, message.words);
+      // One transferable per frame: the page owns it, the worker allocates the next.
+      post(message, [buffer]);
     },
   };
 }
