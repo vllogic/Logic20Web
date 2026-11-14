@@ -69,7 +69,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 2. UHSIF 块：16 B 头 + `payload_len` 个 **32-bit 字**（不是字节！范围 120..4092），总线上一块 16 KiB。
 2b. 生产路径在 Dedicated Worker 里跑读泵 + parser；每 8.33 ms 一批（16CH@160MHz 约 2.66 MB）transfer 给页面，buffer 池 8 个 + ack 回传复用。`?vllogic-worker=0` 回退页面线程。Worker 的 batch 缓冲按选中 lane 数分配。
 3. `vllogic.ts`：
-   - 保持 `depth` 条 `transferIn` 同时在飞（默认 64，单次请求 256 KiB；Chromium/Linux 实测每次完成约 230–256 KiB，64 条约 16 MiB 请求窗口。**Linux 要把 `usbfs_memory_mb` 提到 64**：默认 16 时 64 × 256 KiB 正好顶满预算，`transferIn` 会报 “A transfer error has occurred”；也可用 `?vllogic-depth=32` 临时降到 8 MiB。16 KiB 是 UHSIF 块粒度，不是完成长度）。
+   - 保持 `depth` 条 `transferIn` 同时在飞（单次请求 256 KiB；桌面 Linux 默认 **32** 条 = 8 MiB，适配内核默认的 16 MiB usbfs 预算；Windows/macOS 默认 **64** 条 = 16 MiB。Linux 上把 `usbfs_memory_mb` 提到 64 后，可用 `?vllogic-depth=64` 恢复 16 MiB 窗口；默认 16 时 64 × 256 KiB 正好顶满预算，`transferIn` 会报 “A transfer error has occurred”。16 KiB 是 UHSIF 块粒度，不是完成长度）。
    - 完成回调**先补发**下一条读，再交给消费者；按提交序号严格排序消费。
    - 达到 `deviceSampleLimit` 立即 `onEnd`，不等被 Stop 的读队列排空。
    - 首块校验：`div / mask / mode / capturing` 与配置不符直接报 `device.headerMismatch`（ACK 不参与）。
@@ -177,7 +177,7 @@ npm run dev
 
 ### 评估页优化在主 APP 的落地情况
 
-已进入生产路径：pre-START drain（默认 20 ms）、START ACK barrier、`depth=64 × 256 KiB`、采集前 `reserveSamples`、120 Hz `ChannelMajorCoalescer`、Worker 读泵、预算达成后的 20 ms tail drain、可等待 `release()`。
+已进入生产路径：pre-START drain（默认 20 ms）、START ACK barrier、`depth=64 × 256 KiB`（Windows/macOS；桌面 Linux 默认 32 × 256 KiB）、采集前 `reserveSamples`、120 Hz `ChannelMajorCoalescer`、Worker 读泵、预算达成后的 20 ms tail drain、可等待 `release()`。
 
 仍在评估页、未进主 APP：同一几何下复用 store（`cachedStore.reset()`；主 APP 每轮新建 store，Repeat 需要保留上一轮）、longtask/rAF 帧统计（诊断用）、可变 depth/read KiB/合并间隔（主 APP 用固定生产值，仅 URL 参数可调）。
 
@@ -239,7 +239,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
    - 0.5 s × 20 轮压测仍有 20%–30% 轮次中段 drop；`longtask` 全 0（阈值 50 ms），但 rAF 帧间隔显示 drop 轮 `frameMax≈33 ms`、`frameSlow(>20 ms)` 为 7–16，非 drop 轮 0–4。**主线程 20–33 ms 停顿是根因**。
    - `PlanarSampleStore.reserveSamples()` 可在 START 前预分配 base/pyramid（base 每通道每块 2 MiB，采集期间增长会触发 GC）；测试页已默认勾选“预分配 store”。
    - 预分配实测把 0.5 s × 20 轮的 drop 从 6/20 降到 2/20；剩余停顿与“每轮新建 160 MB store、由 GC 在下一轮回收”相关。`PlanarSampleStore.reset()` 保留块数组只清 bookkeeping，测试页在同一几何下复用 store（不再每轮新建）。
-   - **最终配置**：depth **64**（64 × 256 KiB ≈ 16 MiB 请求窗口，Linux 需把 `usbfs_memory_mb` 提到 64；默认 16 会顶满预算并让 `transferIn` 报 transfer error）+ 预分配 + 复用 store，0.5 s × 20 轮 **0/20 drop**；慢帧仍有（`frameMax` 最大 49.8 ms、`frameSlow` 0–15），但被缓冲吸收；`runMs` 500–582 ms（停顿会拉长采集时间，不丢样）。
+   - **最终配置**：depth **64**（64 × 256 KiB ≈ 16 MiB 请求窗口；Windows/macOS 默认，桌面 Linux 默认 32，只有把 `usbfs_memory_mb` 提到 64 后才用 `?vllogic-depth=64`；Linux 默认 16 MiB 预算下 64 条会顶满并让 `transferIn` 报 transfer error）+ 预分配 + 复用 store，0.5 s × 20 轮 **0/20 drop**；慢帧仍有（`frameMax` 最大 49.8 ms、`frameSlow` 0–15），但被缓冲吸收；`runMs` 500–582 ms（停顿会拉长采集时间，不丢样）。
    - 收尾 drain（`TAIL_DRAIN_MS=20`）仍保留，专门防“预算达成后停止读”造成的尾部溢出。
    - pyusb 侧 20 MHz×4CH×1 s 得到 2,553,408 words ≈ 20.4 MSa/s、10.22 MB，确认没有 4 倍问题。
    - 剩余：任意 lane 子集/新带宽规则（见下一条）、10/5/2.5 MHz 抽稀、无触发 Loop 待真实硬件实测。旧的 20CH@120MHz 档位不再是上限。

@@ -63,7 +63,10 @@ import {
  * positions were spread through the middle of the capture (24-72% of the budget), so
  * this is the page thread briefly losing its schedule, not a tail overflow: more
  * reads in flight absorb that pause. The 0.5 s stress run still dropped with 32, so
- * 64 is the current default; on Linux that needs usbfs_memory_mb >= 16 (64 x 256 KiB).
+ * 64 is the current default; on desktop Linux that needs usbfs_memory_mb raised to 64,
+ * because the kernel's default 16 MiB budget is exactly 64 x 256 KiB and any other
+ * usbfs allocation pushes the queue over it. Desktop Linux therefore defaults to 32
+ * reads (8 MiB), and `?vllogic-depth=64` remains available after raising the budget.
  *
  * Each transferIn asks for 256 KiB and, on Chromium/Linux, completes with ~230-256 KiB
  * (278 reads carried ~64 MB at depth 32; only the last read is short). The 16 KiB
@@ -72,6 +75,8 @@ import {
  */
 const DEFAULT_READ_BYTES = 256 * 1024;
 const DEFAULT_READ_DEPTH = 64;
+/** Desktop Linux: fit inside the default 16 MiB usbfs budget with headroom. */
+const DEFAULT_READ_DEPTH_LINUX = 32;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_READ_DEPTH = 64;
 const CONFIG_SETTLE_MS = 35;
@@ -126,11 +131,14 @@ export interface VllogicDrainStats {
 /**
  * Resolve the read geometry, honouring the bring-up query parameters. Values outside
  * the safe range fall back to the defaults rather than silently starving the endpoint.
+ * The optional user agent exists so the offline self-test can cover the Linux default.
  */
-export function vllogicReadTuning(search?: string): VllogicReadTuning {
+export function vllogicReadTuning(search?: string, userAgent?: string): VllogicReadTuning {
+  const ua = userAgent ?? (typeof navigator === 'undefined' ? '' : navigator.userAgent);
+  const linux = /Linux/i.test(ua) && !/Android/i.test(ua);
   const defaults: VllogicReadTuning = {
     bytes: DEFAULT_READ_BYTES,
-    depth: DEFAULT_READ_DEPTH,
+    depth: linux ? DEFAULT_READ_DEPTH_LINUX : DEFAULT_READ_DEPTH,
     firstBlockMs: DEFAULT_FIRST_BLOCK_MS,
     drainIdleMs: DEFAULT_DRAIN_IDLE_MS,
   };

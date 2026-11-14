@@ -969,7 +969,7 @@ async function main(): Promise<void> {
     );
     const defaults = vllogicReadTuning('');
     check(
-      'read tuning honours safe overrides, rejects unsafe values and defaults to 256 KiB x 64',
+      'read tuning honours safe overrides and rejects unsafe values',
       overridden.bytes === 131072 && overridden.depth === 4 && overridden.firstBlockMs === 250 &&
         overridden.drainIdleMs === 20 &&
         rejected.bytes === 256 * 1024 && rejected.depth === 64 &&
@@ -978,6 +978,21 @@ async function main(): Promise<void> {
         defaults.firstBlockMs === 1000 && defaults.drainIdleMs === 20,
       `override=${JSON.stringify(overridden)} rejected=${JSON.stringify(rejected)} ` +
         `defaults=${JSON.stringify(defaults)}`,
+    );
+  }
+
+  {
+    const linuxUa = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    const androidUa = 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
+    const linux = vllogicReadTuning('', linuxUa);
+    const android = vllogicReadTuning('', androidUa);
+    const linuxOverride = vllogicReadTuning('?vllogic-depth=64', linuxUa);
+    check(
+      'desktop Linux defaults to a 32-read usbfs-safe queue',
+      linux.depth === 32 && android.depth === 64 && linuxOverride.depth === 64,
+      `linux=${linux.depth} android=${android.depth} override=${linuxOverride.depth}`,
     );
   }
 
