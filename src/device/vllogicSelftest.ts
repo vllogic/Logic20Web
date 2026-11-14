@@ -16,7 +16,11 @@ import {
   VLLOGIC_EP_IN_ADDR,
   VLLOGIC_EP_OUT_ADDR,
   VLLOGIC_NUM_CHANNELS,
+  VLLOGIC_BCD_LOGIC20,
+  VLLOGIC_BCD_LOGIC20_ANDROID,
   VllogicParser,
+  vllogicBcdDevice,
+  vllogicBcdIsLogic20,
   vllogicBuildCommand,
   vllogicBuildLut,
   vllogicCrc16,
@@ -69,7 +73,7 @@ class FakeUsb {
   readonly serialNumber = 'selftest';
   deviceVersionMajor = 8;
   deviceVersionMinor = 0x02;
-  readonly deviceVersionSubminor = 0;
+  deviceVersionSubminor = 0;
   readonly chunks: Uint8Array[] = [];
   /** Blocks the pre-START drain may see; empty means the endpoint is idle. */
   readonly beforeStartChunks: Uint8Array[] = [];
@@ -978,6 +982,31 @@ async function main(): Promise<void> {
         defaults.firstBlockMs === 1000 && defaults.drainIdleMs === 20,
       `override=${JSON.stringify(overridden)} rejected=${JSON.stringify(rejected)} ` +
         `defaults=${JSON.stringify(defaults)}`,
+    );
+  }
+
+  {
+    const android = vllogicBcdDevice(8, 0, 1);
+    const fake = new FakeUsb();
+    fake.deviceVersionMinor = 0;
+    fake.deviceVersionSubminor = 1;
+    const device = await VllogicDevice.open(fake as unknown as USBDevice);
+    check(
+      'an Android Chrome bcdDevice 0x0801 opens as a Logic20',
+      android === VLLOGIC_BCD_LOGIC20_ANDROID && device.name === 'Logic20',
+      `bcd=0x${android.toString(16).padStart(4, '0')}, name=${device.name}`,
+    );
+  }
+
+  {
+    const values = [0x0801, 0x0802, VLLOGIC_BCD_LOGIC20];
+    check(
+      'the Logic20 identity accepts the 8.x bcdDevice family and rejects the Sniffer2',
+      values.every((bcd) => vllogicBcdIsLogic20(bcd)) &&
+        !vllogicBcdIsLogic20(0x0602) && !vllogicBcdIsLogic20(0x0700) &&
+        vllogicBcdDevice(8, 2, 0) === VLLOGIC_BCD_LOGIC20,
+      `values=${values.map((bcd) => `0x${bcd.toString(16)}`).join('/')} ` +
+        `desktop=0x${vllogicBcdDevice(8, 2, 0).toString(16)}`,
     );
   }
 
