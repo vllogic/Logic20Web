@@ -136,6 +136,10 @@ WebUSB has no cancellable `transferIn`, so three things replace the native drain
 - `stop()` resolves the read loop's completion wait directly (`wakeLoop`); a board that
   stops sending cannot park the loop for the rest of the page session. Outstanding
   reads still get the 750 ms settle window, because they cannot be cancelled.
+- Reads that remain parked when a capture stops are carried into the next capture's
+  read loop in submission order. They are the first reads to see the next START ACK,
+  so abandoning them would make the new parser wait forever (the old reads would eat
+  the ACK). A read that completes before the next START is dropped as stale.
 
 Loop capture is host-side for the Logic20: the board streams until STOP and the page
 keeps only the newest `loopRetentionLen` samples, dropping the front in large
