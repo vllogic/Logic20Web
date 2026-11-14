@@ -269,6 +269,15 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 - 文档/注释里再全局搜一次 “4092-byte”“51 snapshots”“multiple of four”，确保都改成 dwords 语义（`vllogicProtocol.ts` 里的一处已改；`PROTOCOL-VLLOGIC-LOGIC20.md` 的 “does not have to be a multiple of four” 是正确表述，勿误删）。
 - `reportReadStats`/bench 的统计口径继续与 app 实际路径保持一致（drain 页已用 store 字节算线速，避免把 20 ms 收尾 drain 算进去）。
 - 手动 Stop 仍保留 750 ms settle（停在端点里的读不会完成）；有限采集达到预算和 Loop 的 Stop 已改为立即返回。
+
+### 已知搁置点：每通道 2^31 样本硬上限（2026-11-14）
+
+- **现象**：所有 `SampleStore`（Planar / Interleaved / RLE / SignalStore）都拒绝长度超过 `0x7fffffff` 的 append/commit；采集 UI 用 `MAX_SAMPLES - 1`（`MAX_SAMPLES = 2 ** 31`）。80 MS/s 下单通道约 **26.8 s** 封顶，与选中通道数无关。
+- **原因**：`BitPlane` 用绝对位索引定位 block/word/bit：`i >> blockBitsLog`、`(i & blockMask) >> 5`、`i & 31`。JS 的 `>>`/`&`/`<<` 会把操作数截成有符号 int32，`i >= 2^31` 后 block 索引变负，因此 `PlanarSampleStore` 在 `to > 0x7fffffff` 时直接拒绝。
+- **历史**：限制从初始 planar store（`375778a`，SLogic 时代）就存在，后来被 Interleaved/RLE/SignalStore 和导出格式继承；Logic20 的 channel-major 路径（`db01022`）沿用同一套 store，自动继承。
+- **与内存预算的关系**：低通道数时先撞样本上限（1 路 @80 MS/s 只用了约 300 MB 就停）；高通道数时先撞 2 GiB 预算（20 路 @80 MS/s 约 9.5 s）。两个上限分别判断，取较小值。
+- **暂不处理的原因**：提高上限不是改 `MAX_SAMPLES` 常量，必须重写 `BitPlane` 的绝对位索引（改用浮点/段内偏移，审计 `rangeState`、`edges`、`writeWords`、`reduceRange`、`dropFront`、pyramid 的绝对 bin），并处理 `.lwcap` 的 uint32 长度（最多 `2^32 - 1` 样本，80 MS/s 约 53.7 s）以及 `.sr`/VCD/触发器位置。建议以后做独立的“分段位平面”重构（每段 < 2^31 样本 + 段表），不要在当前热路径上零散改。
+- **当前策略**：保持保守上限，不会 OOM；需要更长单通道采集时优先降低采样率。
 - **TODO：`.lwcap` 紧凑导出**。当前 `.lwcap` 仍按 store.channelCount（20）写，未选通道会以零通道出现在文件里；`.sr`/`.vcd`/`.csv` 已只导出启用通道。后续给 `planLwcap` 加通道映射，或让 store 暴露“已存储通道列表”并压缩头部。
 - **TODO：存储宽度真正压缩**。稀疏平面已消除 20 倍内存膨胀，但 store 的逻辑宽度仍是 20；若要进一步压缩 header/导出/`channelCount` 语义，需要 D 编号↔store 索引映射，工作量大，先不做。
 
