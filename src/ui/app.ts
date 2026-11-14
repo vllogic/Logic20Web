@@ -31,6 +31,9 @@ import {
   annotationTexts, displayRows, getDecoder, hydrateDecoders, rowForClass, sharedDecodeClient,
 } from '../decode/index.js';
 import type { ChannelEdges, DecodeRequest, DecodeResult } from '../decode/index.js';
+import {
+  VLLOGIC_RATES, VLLOGIC_THRESHOLD_PRESETS,
+} from '../device/vllogicProtocol.js';
 
 import type { AssistantHost, CaptureOutcome } from '../assistant/tools.js';
 
@@ -439,9 +442,9 @@ export class App {
     decodersURL: new URL(`./${__SLOGICWEB_RUNTIME_PATHS__.decoders}`, document.baseURI).href,
   });
 
-  private channels: ChannelState[] = defaultChannels(16);
+  private channels: ChannelState[] = defaultChannels(20);
   /** Display order, holding capture channel indices. */
-  private order: number[] = Array.from({ length: 16 }, (_, i) => i);
+  private order: number[] = Array.from({ length: 20 }, (_, i) => i);
   private analyzers: AnalyzerState[] = [];
   private lanes: Lane[] = [];
   private nextAnalyzer = 0;
@@ -747,7 +750,7 @@ export class App {
       this.fitRows = workspace.fitRows !== false;
       this.quickScroll = workspace.quickScroll !== false;
       this.developerTools = workspace.developerTools === true;
-      this.channels = (workspace.channels ?? defaultChannels(16)).map((channel, index) => ({ ...channel, index }));
+      this.channels = (workspace.channels ?? defaultChannels(20)).map((channel, index) => ({ ...channel, index }));
       this.order = workspace.order ?? this.channels.map((channel) => channel.index);
       this.busViews = (workspace.busViews ?? []).map((config, id) => ({
         ...cloneBusConfig(config), id: `bus-${id}`, builder: null, builtFor: null, cache: null,
@@ -769,6 +772,8 @@ export class App {
       // The page opens on the Logic20 default (80 MS/s) unless the user explicitly
       // picked a rate in an earlier session.
       samplerate: this.samplerateExplicit ? (workspace?.capture?.samplerate ?? 80e6) : 80e6,
+      // Logic20 comparator default before a board is connected (3.3 V CMOS mid-swing).
+      thresholdVolts: workspace?.capture?.thresholdVolts ?? 1.6,
       triggerModes,
       triggerConditions,
       triggerChannel: first?.channel ?? 0,
@@ -935,9 +940,9 @@ export class App {
     return this.order.map((i) => this.channels[i]!).filter((c) => this.channelAvailable(c.index) && c.enabled);
   }
 
-  /** True when the connected transport is the Logic20 (fixed 20-lane, arbitrary subset). */
+  /** True for the Logic20 UI: fixed 20-lane selection, also before a board is connected. */
   private isLaneSelectDevice(): boolean {
-    return this.device?.sampleLayout === 'channel-major';
+    return this.device === null || this.device.sampleLayout === 'channel-major';
   }
 
   private resetChannelSelectionTimes(): void {
@@ -1075,8 +1080,6 @@ export class App {
     const channels = this.channels.slice(start, start + CHANNEL_BANK_SIZE)
       .filter((channel) => channel.index < this.renderChannelCount());
     if (channels.length === 0) return;
-    if (!select && channels.filter((channel) => channel.enabled).length ===
-        this.selectedChannelCount()) return; // never zero selected lanes
     const at = ++this.channelSelectClock;
     const disabled: number[] = [];
     for (const channel of channels) {
@@ -1086,8 +1089,18 @@ export class App {
       else this.channelSelectedAt.delete(channel.index);
     }
     if (disabled.length > 0) this.dropChannelReferences(disabled);
+    this.ensureMinimumChannel();
     this.enforceChannelBandwidth();
     this.afterChannelChange();
+  }
+
+  /** A capture needs at least one lane: keep the lowest available D channel. */
+  private ensureMinimumChannel(): void {
+    if (this.selectedChannelCount() > 0) return;
+    const first = this.channels.find((channel) => channel.index < this.renderChannelCount());
+    if (!first) return;
+    first.enabled = true;
+    this.markChannelSelected(first.index);
   }
 
   /**
@@ -2528,13 +2541,13 @@ export class App {
     const c = this.channels[index];
     if (!c) return;
     if (!enabled && lockedChannelBanks(this.busViews, this.renderChannelCount()).has(channelBankStart(index))) return;
-    if (!enabled && this.enabledChannels().length <= 1) return;   // never zero rows
     c.enabled = enabled;
     if (enabled) this.markChannelSelected(index);
     else {
       this.channelSelectedAt.delete(index);
       if (this.isLaneSelectDevice()) this.dropChannelReferences([index]);
     }
+    this.ensureMinimumChannel();
     this.enforceChannelBandwidth();
     this.afterChannelChange();
   }
@@ -5254,7 +5267,7 @@ export class App {
       savePercent: this.savePercent,
       analogGroups: this.analogGroups(),
       loopSupported: true,
-      triggerSupported: this.device?.sampleLayout !== 'channel-major',
+      triggerSupported: this.device !== null && this.device.sampleLayout !== 'channel-major',
       deviceName: this.device?.name ?? null,
       developerTools: this.developerTools,
       running: this.running,
@@ -5273,14 +5286,19 @@ export class App {
         : null,
       progress: this.running ? this.progressView() : null,
       maxSamplerateHz: this.rateCeilings,
-      sampleratesHz: this.device?.sampleratesHz,
+      sampleratesHz: this.device?.sampleratesHz
+        ?? (this.isLaneSelectDevice() ? VLLOGIC_RATES.map((entry) => entry.rate) : undefined),
       // No device: no test-mode row until a board that has patterns is connected.
       testModes: this.device === null ? [] : this.device.testModes,
-      thresholdPresets: this.device?.thresholdPresets,
+      thresholdPresets: this.device?.thresholdPresets
+        ?? (this.isLaneSelectDevice() ? VLLOGIC_THRESHOLD_PRESETS : undefined),
       thresholdRange: this.device?.thresholdRange
         ? { min: this.device.thresholdRange.min, max: this.device.thresholdRange.max, step: 0.001 }
-        : undefined,
-      thresholdDac: this.device?.sampleLayout !== 'channel-major',
+        : this.isLaneSelectDevice()
+          ? { min: -2.5, max: 5.0, step: 0.001 }
+          : undefined,
+      thresholdDac: this.device === null
+        ? false : this.device.sampleLayout !== 'channel-major',
       recommendedSamplerateHz: this.rateRecommendations,
       triggerState: this.triggerState,
       cursors: this.cursorRows(),
@@ -7825,7 +7843,6 @@ export class App {
   /** Enable exactly `list`, ignoring channels the device lacks. */
   private setEnabledChannels(list: number[]): void {
     const want = new Set(list.filter((i) => i >= 0 && i < this.renderChannelCount()));
-    if (want.size === 0) return;   // never zero rows
     const locked = lockedChannelBanks(this.busViews, this.renderChannelCount());
     const at = ++this.channelSelectClock;
     const disabled: number[] = [];
@@ -7838,6 +7855,7 @@ export class App {
       c.enabled = next;
     }
     if (disabled.length > 0) this.dropChannelReferences(disabled);
+    this.ensureMinimumChannel();
     this.enforceChannelBandwidth();
     this.afterChannelChange();
   }

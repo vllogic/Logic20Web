@@ -156,6 +156,16 @@ check(
     (app.match(/this\.enforceChannelBandwidth\(\);/g) ?? []).length >= 4 &&
     app.includes('private dropChannelReferences(closed: readonly number[]): void') &&
     app.includes('private setChannelBankSelected(start: number, select: boolean): void') &&
+    app.includes('private ensureMinimumChannel(): void') &&
+    (app.match(/this\.ensureMinimumChannel\(\);/g) ?? []).length >= 3 &&
+    !app.includes('never zero rows') &&
+    app.includes('private channels: ChannelState[] = defaultChannels(20);') &&
+    app.includes("return this.device === null || this.device.sampleLayout === 'channel-major';") &&
+    app.includes("thresholdVolts: workspace?.capture?.thresholdVolts ?? 1.6") &&
+    app.includes('VLLOGIC_RATES.map((entry) => entry.rate)') &&
+    app.includes('VLLOGIC_THRESHOLD_PRESETS') &&
+    app.includes('triggerSupported: this.device !== null && this.device.sampleLayout') &&
+    app.includes('thresholdDac: this.device === null') &&
     app.includes('if (this.isLaneSelectDevice()) return [];');
   check(
     'the app streams the selected lanes, trims them and clears stale references',
@@ -163,6 +173,8 @@ check(
     `selection=${app.includes('selectedChannels: this.selectedChannels()')} ` +
       `sparse=${app.includes('store.setActiveChannels?.(cfg.selectedChannels)')} ` +
       `trim=${(app.match(/this\.enforceChannelBandwidth\(\);/g) ?? []).length} ` +
+      `minimum=${app.includes('private ensureMinimumChannel(): void')} ` +
+      `defaultLanes=${app.includes('defaultChannels(20)')} ` +
       `widthHidden=${app.includes('if (this.isLaneSelectDevice()) return [];')}`,
   );
   const rendered = panel.includes("select.className = 'bank-select'") &&
