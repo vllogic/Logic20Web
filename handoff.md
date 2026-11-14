@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-14，对应 `main` 的 `5f32e0a`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
+最后更新：2026-11-14，对应 `main` 的 `dbbd34f`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
 
 ---
 
@@ -93,6 +93,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **首块无看门狗**：START 后设备被卡住（命令都 ACK、bulk 不出数）时 UI 会一直 Capturing。现在 1 s 内没有 data block 就报 `device.noData`（`?vllogic-firstblock=<ms>` 可调，20..60000）。
 - **首块校验误报**：`acceptBatch` 只对 data block 的 header 做校验；START 的 ACK 不更新 `lastHeader`，不会触发 `device.headerMismatch`。
 - **mask 不符仍消费 payload**：parser 现在整块丢弃 mask 与配置不符的 payload（`discardPayload`），避免旧 lane 顺序混进采集；`maskMismatch` 仍计数。
+- **默认采样率必须是 80 MS/s**：页面打开/连接 Logic20 后就要选中它（20 lane × 80 MHz = 1600 Mbps，低于 2560 提示线）。旧 workspace 里非 explicit 的 16 MS/s 会被覆盖；显式选择保持，但必须 snap 到 Logic20 的速率表。不要改回只靠 `recommendedSamplerateHz`，否则某些 workspace 会显示 16 或空白。
 - **旧的 2.4 Gbit/s 通道档位作废**：不要再按 `vllogicMaxChannels()` 的 2/4/8/16/20 档（那是旧的每行 2.4Gbit 规则）限制 UI。现行规则是任意 lane 子集 + 4500 Mbps 总带宽硬限制；`vllogicMaxChannels()` 只作为总带宽换算的辅助。
 - **通道芯片不再只是显示开关**：Logic20 上 `enabled` 决定本次采集的 lane 子集，`CaptureConfig.selectedChannels` 交给 transport；未选 lane 在 store 中没有平面。不要改回“采集前 N 路、芯片只隐藏行”。
 - **内存不能按 20 路固定分配**：`PlanarSampleStore` 的稀疏活跃集合是硬要求；未选通道不能 `extendTo()`/建 pyramid，否则选 1 路会膨胀 20 倍。
@@ -113,6 +114,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 端点 | OUT `0x01`，IN `0x81`（WebUSB 传端点号 1） |
 | 时钟 | 2.4 GHz / div |
 | 速率表 | 1200/600/300/150/120/80/40/20 MHz（div 2/4/8/16/20/30/60/120）+ 10/5/2.5 MHz（div 120，上位机 2/4/8 抽一） |
+| 默认采样率 | 80 MS/s（页面打开即选中；Logic20 20 lane = 1600 Mbps） |
 | 通道选择 | 任意 0..19 子集（CHANNEL_MASK + LUT 环），不限“前 N 路” |
 | 内部 FIFO | 理论 4800 Mbps；上位机硬限制 4500 Mbps（选中数 × 采样率） |
 | USB / 上位机 | 实测约 2560 Mbps；超过只提示，不强制 |
@@ -263,6 +265,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 ## 9. 近期提交（截至交接）
 
 ```
+dbbd34f  fix(ui): open on the Logic20 80 MS/s default
 5f32e0a  feat(ui): select Logic20 lanes within the FIFO and link limits
 360177a  feat(device): stream arbitrary Logic20 lane subsets
 9b386f7  feat(data): store only the selected channel-major lanes
