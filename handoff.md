@@ -198,10 +198,11 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 
 1. **用真实硬件复测修复后的采集**（已完成 2026-11-14，16CH@160MHz）
    - 合并提交 8.33 ms 时 18 轮均为 320–346 MB/s、effMSa≈160；`crcFail/maskMismatch/seqJumps` 全 0，`stopMs < 6 ms`。
-   - 偶发 `drop=1` 都出现在采集中段（`dropAtSnapshots` 为预算的 24%–72%，`firstDataDrop=false`），是页面线程短暂失去调度导致设备 FIFO 溢出；depth 8 为 3/6 轮、16 为 2/6、32 为 0/6。默认 depth 因此提到 **32**（每次 `transferIn` 请求 256 KiB，实测完成 230–256 KiB，≈8 MiB 请求窗口）。
+   - 偶发 `drop=1` 都出现在采集中段（`dropAtSnapshots` 为预算的 24%–72%，`firstDataDrop=false`），是页面线程短暂失去调度导致设备 FIFO 溢出；depth 8 为 3/6 轮、16 为 2/6、32 为 0/6（0.2 s 组）。
    - 0.5 s × 20 轮压测仍有 20%–30% 轮次中段 drop；`longtask` 全 0（阈值 50 ms），但 rAF 帧间隔显示 drop 轮 `frameMax≈33 ms`、`frameSlow(>20 ms)` 为 7–16，非 drop 轮 0–4。**主线程 20–33 ms 停顿是根因**。
    - `PlanarSampleStore.reserveSamples()` 可在 START 前预分配 base/pyramid（base 每通道每块 2 MiB，采集期间增长会触发 GC）；测试页已默认勾选“预分配 store”。
    - 预分配实测把 0.5 s × 20 轮的 drop 从 6/20 降到 2/20；剩余停顿与“每轮新建 160 MB store、由 GC 在下一轮回收”相关。`PlanarSampleStore.reset()` 保留块数组只清 bookkeeping，测试页在同一几何下复用 store（不再每轮新建）。
+   - **最终配置**：depth **64**（64 × 256 KiB ≈ 16 MiB 请求窗口，Linux 需 `usbfs_memory_mb >= 16`）+ 预分配 + 复用 store，0.5 s × 20 轮 **0/20 drop**；慢帧仍有（`frameMax` 最大 49.8 ms、`frameSlow` 0–15），但被缓冲吸收；`runMs` 500–582 ms（停顿会拉长采集时间，不丢样）。
    - 收尾 drain（`TAIL_DRAIN_MS=20`）仍保留，专门防“预算达成后停止读”造成的尾部溢出。
    - pyusb 侧 20 MHz×4CH×1 s 得到 2,553,408 words ≈ 20.4 MSa/s、10.22 MB，确认没有 4 倍问题。
    - 剩余：20CH@160MHz（400 MB/s）和 100 MHz 默认场景待复测。
@@ -210,9 +211,10 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
    - 已实现 `?vllogic-drain=<ms>`（空闲探测 + 预 arm 交接），**默认 20**：页面实测上一轮 STOP 后端点仍有 ~128 KiB 尾部，不开会在下一轮被当成新数据。
 3. ~~stop 唤醒 readLoop + 首块超时~~ **已完成（2026-11-14）**
    - `stop()` 调 `wakeLoop`，`loopCompleted` 可观测；`device.noData` 看门狗 1 s（`?vllogic-firstblock=<ms>`）。
-4. **Worker 迁移评估**
-   - 当前页面线程处理约占 7–10%（16CH@160MHz），并发+depth 已够；
-   - 只有在重 UI 负载下仍掉速，或 20CH 满速需要更大缓冲时，再上 Worker（复用 `usbWorker`/`workerTransport`）。
+4. **Worker 迁移评估（暂缓）**
+   - depth 64 + 预分配/复用后，bench 页面 0.5 s × 20 轮已 0 drop；Worker 的直接收益（避免丢样）不存在，只剩“减少 20–50 ms 慢帧对采集时长的影响”。
+   - 待办：在**生产 app**（有波形绘制/解码）上跑同样的 160 MHz × 16 CH × 0.5 s，看 `[vllogic] drop=`。若生产 app 仍丢样，再按 `usbWorker` 模式做 channel-major Worker 原型（Worker 内 parser + 8.33 ms 聚合，主线程只写 store），保留 `?vllogic-worker=0` 回退。
+   - 设计要点：Worker 内 `VllogicDevice` + `VllogicParser`，每 ~8.33 ms 把每通道 words 用 transferable 发回；主线程只 `beginFrame/appendChannel/commitSamples`；错误/dropout/ended/stats 走消息。
 
 ### P2
 
