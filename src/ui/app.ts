@@ -6642,6 +6642,12 @@ export class App {
         },
       };
       if (device.startChannelMajor) {
+        // A planar store grows in 2 MiB blocks per channel; at 320 MB/s that is a fresh
+        // allocation every few milliseconds, and the resulting GC pause is longer than
+        // the USB queue covers. Reserve the whole capture before START instead.
+        if (!isLoop && this.captureLimitSamples > 0) {
+          store.reserveSamples?.(this.captureLimitSamples + 32);
+        }
         // Channel-major device: write each channel's words straight into its plane and
         // publish the snapshot only after every channel has arrived. The interleaved
         // sink above is never used for this transport.

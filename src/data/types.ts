@@ -105,6 +105,11 @@ export interface SampleStore {
    */
   commitSamples?(samples: number): void;
   dropFront(samples: number): void;
+  /** Allocate storage for `samples` samples up front, so a capture does not grow (and
+   *  trigger GC) while it runs. Optional: not every store can reserve. */
+  reserveSamples?(samples: number): void;
+  /** Empty the store while keeping its allocation, for a repeated capture. Optional. */
+  reset?(): void;
   query(channel: number, startSample: number, endSample: number, bins: number): ColumnView;
   edges(channel: number, startSample: number, endSample: number): Int32Array;
   edgeCount?(channel: number, startSample: number, endSample: number): number;
