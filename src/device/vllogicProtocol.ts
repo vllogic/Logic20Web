@@ -26,34 +26,30 @@
 import { VLLOGIC_FIFO_HARD_MBPS, maxChannelsForBandwidth } from './vllogicBandwidth.js';
 
 /**
- * USB identity. Logic20 firmware reports bcdDevice 0x0820 (8.20); the host stacks
- * decode the BCD nibbles differently: Windows shows the raw REV_0820, desktop
- * Chrome splits it into 8 / 2 / 0, and Chrome on Android has been observed
- * reporting 0x0801 for the same board. Every Logic20 firmware is USB device
- * version 8.x, while the older Sniffer2 is 0x0602 and is not compatible.
+ * USB identity. Logic20 firmware reports bcdDevice 8.20 once, but WebUSB hosts
+ * decode the low BCD byte differently: desktop Chrome exposes major 8 / minor 2,
+ * while Chrome on Android exposes major 8 / minor 1. That is a host decoding
+ * quirk, not three device identities, so match the expected value for the host.
  */
 export const VLLOGIC_VID = 0x1209;
 export const VLLOGIC_PID = 0x6688;
-/** Raw firmware bcdDevice: 8.20. */
-export const VLLOGIC_BCD_LOGIC20 = 0x0820;
-/** Chrome on Android has been observed reporting this value for the same board. */
-export const VLLOGIC_BCD_LOGIC20_ANDROID = 0x0801;
-/** All Logic20 firmware versions share this bcdDevice high byte. */
-export const VLLOGIC_BCD_LOGIC20_FAMILY = 0x0800;
+/** Logic20 firmware major version (bcdDevice 8.20). */
+export const VLLOGIC_BCD_MAJOR = 8;
 export const VLLOGIC_PRODUCT = 'Logic20';
 
-/**
- * Rebuild bcdDevice from the three fields WebUSB splits it into. Chrome on Android
- * fills the fields differently than desktop Chrome, so compare the rebuilt value
- * against the 8.x family instead of one exact combination.
- */
-export function vllogicBcdDevice(major: number, minor: number, subminor: number): number {
-  return ((major & 0xFF) << 8) | ((minor & 0x0F) << 4) | (subminor & 0x0F);
+/** Chrome on Android decodes bcdDevice's low BCD byte as 1 instead of 2. */
+export function vllogicAndroidHost(userAgent: string): boolean {
+  return /Android/i.test(userAgent);
 }
 
-/** True for Logic20 firmware; rejects the Sniffer2 (0x06xx) and unrelated devices. */
-export function vllogicBcdIsLogic20(bcd: number): boolean {
-  return (bcd & 0xFF00) === VLLOGIC_BCD_LOGIC20_FAMILY;
+/** The minor field each host produces for the same 8.20 firmware. */
+export function vllogicBcdMinorForHost(android: boolean): number {
+  return android ? 1 : 2;
+}
+
+/** True when the WebUSB version fields match this host's Logic20 decoding. */
+export function vllogicBcdMatchesHost(major: number, minor: number, android: boolean): boolean {
+  return major === VLLOGIC_BCD_MAJOR && minor === vllogicBcdMinorForHost(android);
 }
 export const VLLOGIC_IFACE = 0;
 /** Descriptor endpoint addresses (include the direction bit). */

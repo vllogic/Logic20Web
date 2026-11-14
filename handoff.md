@@ -76,7 +76,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
    - 首块看门狗：START 后 1 s 内没有 data block 报 `device.noData`；`stop()` 会唤醒停在等待里的循环。
    - `stop()` 对“已交付 sample budget”的有限采集立即返回（STOP 后的 pending 读不会完成，等满 750 ms 没有意义）；手动 Stop 仍保留 750 ms settle 收集尾部。
    - START 前排空：`?vllogic-drain=<ms>`（默认 20）；空闲窗口内完成的数据丢弃，窗口后挂起的读作为采集的第 0 条读（预 arm）。实测能把上一轮 STOP 后残留的 ~128 KiB 尾部清掉。
-   - 设备身份：接受 bcdDevice 的 `0x08xx` 家族（Windows 原始 `0x0820`、桌面 Chrome `0x0802`、安卓 Chrome `0x0801` 都见过），拒绝 Sniffer2 的 `0x0602`。
+   - 设备身份：固件 bcdDevice 只有 8.20；安卓 Chrome 与桌面 Chrome 对低 BCD 字节的解码不同，`vllogicBcdMatchesHost()` 按宿主分别匹配，拒绝 Sniffer2 的 `0x0602`。
    - `drop_flag` 边沿通过 dropout sink 上报；`seq` 跳变、`partialSnapshots` 写入 parser stats。
    - Loop：设备无限流，app 在每次 120 Hz commit 后按 `loopRetentionLen` 丢弃前端（大块、512 对齐），`ChannelMajorCoalescer` 用 `store.length` 作为每帧起点；手动 Stop 不等 750 ms。
    - 抽稀：10/5/2.5 MHz 设备仍按 20 MHz 流，`VllogicDecimator` 在 host 端每 2/4/8 个样本取一个，跨批保留余数，提交仍是 32 对齐。有限采集的 `deviceSampleLimit` 在 START 时向下对齐到 32；尾批按 `decimateFactor` 把“剩余输出快照”换算成输入快照，避免抽稀时为了凑数跳过成块输入、破坏尾部连续性。
@@ -105,7 +105,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **target 用 `Math.ceil` 截断**：整快照提交不可能精确命中任意样本数，`Math.ceil` 会超预算最多 31 样本。现在 START 时向下对齐到 32，抽稀尾批再按 `decimateFactor` 换算；不要改回向上取整或按输出快照数截输入。
 - **coalescer 尾批**：`startChannelMajor()` 在 START 完成后就返回；曾在这里把 coalescer 引用置空，导致 `onEnd`/手动 Stop 无法 flush 最后一批。现在 coalescer 保持到 `finishCapture`，`onEnd` 和 `finishCapture` 都 flush。
 - **升级提示卡**：不再永久占用右上角；显示 3 秒自动收起，升级图标保持 ready。
-- **bcdDevice**：真实固件是 `0x0820`（Windows 显示 `REV_0820`）。主机解码 BCD 的方式不一致：桌面 Chrome 用 major/minor 组合出 `0x0802`，安卓 Chrome 实测报 `0x0801`。现在用 `vllogicBcdDevice()` 还原字段后按 `0x08xx` 家族接受，只拒绝 Sniffer2 的 `0x0602`；不要再写死某一种组合。
+- **bcdDevice**：固件只有 8.20（Windows 显示 `REV_0820`），但桌面 Chrome 与安卓 Chrome 对低 BCD 字节的解码不同；这是宿主差异，不是设备有三种版本。现在按宿主匹配（`vllogicBcdMatchesHost()`），不要再写死单一组合，也不要把整个 `0x08xx` 都放行。
 
 ---
 
@@ -114,7 +114,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 项 | 值 |
 |---|---|
 | VID / PID | `0x1209` / `0x6688` |
-| bcdDevice | `0x0820`（Windows 原始）；桌面 Chrome 组合成 `0x0802`，安卓 Chrome 实测 `0x0801`，按 `0x08xx` 家族接受 |
+| bcdDevice | 固件 8.20；桌面 Chrome 与安卓 Chrome 解码不同，按宿主匹配（`vllogicBcdMatchesHost()`）；Sniffer2 `0x0602` 拒绝 |
 | 端点 | OUT `0x01`，IN `0x81`（WebUSB 传端点号 1） |
 | 时钟 | 2.4 GHz / div |
 | 速率表 | 1200/600/300/150/120/80/40/20 MHz（div 2/4/8/16/20/30/60/120）+ 10/5/2.5 MHz（div 120，上位机 2/4/8 抽一） |
@@ -135,7 +135,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 
 - **`payload_len` 是 dwords**，不是字节。见 `uhsif_rx.c:767/841/928-933`、`uhsif.v`。
 - 原生 libsigrok 的 URB 以 16 KiB 短包完成；但 Chromium/Linux 的 WebUSB `transferIn(256 KiB)` 实测每次完成约 230–256 KiB（278 次读 ~64 MB），所以 `depth × 256 KiB` 才是请求窗口，`depth` 提供的是主机侧缓冲时间（32 × 256 KiB ≈ 25 ms @ 320 MB/s）。
-- Chrome 的 bcdDevice 拆分与 Windows 显示不一致（安卓 Chrome 又是第三种），按 `0x08xx` 家族判断，不要只按某一个值拒绝。
+- Chrome 的 bcdDevice 解码与 Windows 原生不同，安卓 Chrome 又与桌面 Chrome 不同；按宿主匹配，不要写死一个值。
 - WebUSB 的 `transferIn` 无法取消：用空闲探测 + 预 arm 排空（`?vllogic-drain`，默认 20 ms）；只靠 STOP+FLUSH 不够，停止时仍有尾部在飞。
 - 高带宽（16CH@160MHz）主机落后时，STOP 后设备仍会完成已排队的尾部数据（实测约 128 KiB，`capturing=1`）。这是**本次采集的尾巴**，不是旧数据；readLoop 会在 750 ms settle 内消费，`captureEpoch` 防止旧循环越代写入。
 - 设备 `drop_flag` 不会在数据里插标记；丢样后时间轴会压缩，必须靠 drop/seq 统计告警。

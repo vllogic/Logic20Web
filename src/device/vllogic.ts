@@ -35,8 +35,8 @@ import {
   VLLOGIC_RATES,
   VLLOGIC_THRESHOLD_PRESETS,
   VllogicParser,
-  vllogicBcdDevice,
-  vllogicBcdIsLogic20,
+  vllogicAndroidHost,
+  vllogicBcdMatchesHost,
   vllogicBuildCommand,
   vllogicBuildLut,
   vllogicMapBuild,
@@ -290,14 +290,19 @@ export class VllogicDevice implements Device {
   static async open(usb: USBDevice, tuning?: VllogicReadTuning): Promise<VllogicDevice> {
     // The PID is shared with the USB Sniffer 2 (bcdDevice 0x0602, UHSIF v2.3).
     // Opening it with the v2.2 parser produces CRC failures and random junk.
-    const bcd = vllogicBcdDevice(
-      usb.deviceVersionMajor, usb.deviceVersionMinor, usb.deviceVersionSubminor,
+    // The Logic20 firmware reports 8.20; Chrome on Android decodes the low BCD byte
+    // as 1 while desktop Chrome decodes it as 2, so match the host's own values.
+    const android = vllogicAndroidHost(
+      typeof navigator === 'undefined' ? '' : navigator.userAgent,
     );
-    const known = vllogicBcdIsLogic20(bcd) ||
-      (bcd === 0 && usb.productName === VLLOGIC_PRODUCT);
+    const versionUnknown = usb.deviceVersionMajor === 0 && usb.deviceVersionMinor === 0 &&
+      usb.deviceVersionSubminor === 0;
+    const known = vllogicBcdMatchesHost(
+      usb.deviceVersionMajor, usb.deviceVersionMinor, android,
+    ) || (versionUnknown && usb.productName === VLLOGIC_PRODUCT);
     if (!known) {
       throw new DiagnosticError('device.unexpectedDevice', {
-        bcd: `0x${bcd.toString(16).padStart(4, '0')}`,
+        bcd: `${usb.deviceVersionMajor}.${usb.deviceVersionMinor}.${usb.deviceVersionSubminor}`,
         product: usb.productName || '(none)',
       });
     }

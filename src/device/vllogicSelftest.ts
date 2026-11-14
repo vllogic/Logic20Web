@@ -16,11 +16,10 @@ import {
   VLLOGIC_EP_IN_ADDR,
   VLLOGIC_EP_OUT_ADDR,
   VLLOGIC_NUM_CHANNELS,
-  VLLOGIC_BCD_LOGIC20,
-  VLLOGIC_BCD_LOGIC20_ANDROID,
+  VLLOGIC_BCD_MAJOR,
   VllogicParser,
-  vllogicBcdDevice,
-  vllogicBcdIsLogic20,
+  vllogicAndroidHost,
+  vllogicBcdMatchesHost,
   vllogicBuildCommand,
   vllogicBuildLut,
   vllogicCrc16,
@@ -73,7 +72,7 @@ class FakeUsb {
   readonly serialNumber = 'selftest';
   deviceVersionMajor = 8;
   deviceVersionMinor = 0x02;
-  deviceVersionSubminor = 0;
+  readonly deviceVersionSubminor = 0;
   readonly chunks: Uint8Array[] = [];
   /** Blocks the pre-START drain may see; empty means the endpoint is idle. */
   readonly beforeStartChunks: Uint8Array[] = [];
@@ -986,27 +985,20 @@ async function main(): Promise<void> {
   }
 
   {
-    const android = vllogicBcdDevice(8, 0, 1);
-    const fake = new FakeUsb();
-    fake.deviceVersionMinor = 0;
-    fake.deviceVersionSubminor = 1;
-    const device = await VllogicDevice.open(fake as unknown as USBDevice);
+    const androidUa = 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
+    const desktopUa = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
     check(
-      'an Android Chrome bcdDevice 0x0801 opens as a Logic20',
-      android === VLLOGIC_BCD_LOGIC20_ANDROID && device.name === 'Logic20',
-      `bcd=0x${android.toString(16).padStart(4, '0')}, name=${device.name}`,
-    );
-  }
-
-  {
-    const values = [0x0801, 0x0802, VLLOGIC_BCD_LOGIC20];
-    check(
-      'the Logic20 identity accepts the 8.x bcdDevice family and rejects the Sniffer2',
-      values.every((bcd) => vllogicBcdIsLogic20(bcd)) &&
-        !vllogicBcdIsLogic20(0x0602) && !vllogicBcdIsLogic20(0x0700) &&
-        vllogicBcdDevice(8, 2, 0) === VLLOGIC_BCD_LOGIC20,
-      `values=${values.map((bcd) => `0x${bcd.toString(16)}`).join('/')} ` +
-        `desktop=0x${vllogicBcdDevice(8, 2, 0).toString(16)}`,
+      'the bcdDevice check follows the host decoder instead of one BCD value',
+      vllogicAndroidHost(androidUa) && !vllogicAndroidHost(desktopUa) &&
+        vllogicBcdMatchesHost(VLLOGIC_BCD_MAJOR, 1, true) &&
+        vllogicBcdMatchesHost(VLLOGIC_BCD_MAJOR, 2, false) &&
+        !vllogicBcdMatchesHost(VLLOGIC_BCD_MAJOR, 2, true) &&
+        !vllogicBcdMatchesHost(VLLOGIC_BCD_MAJOR, 1, false) &&
+        !vllogicBcdMatchesHost(0x06, 2, false),
+      `android=${vllogicBcdMatchesHost(8, 1, true)} desktop=${vllogicBcdMatchesHost(8, 2, false)} ` +
+        `swapped=${vllogicBcdMatchesHost(8, 2, true)}/${vllogicBcdMatchesHost(8, 1, false)}`,
     );
   }
 
