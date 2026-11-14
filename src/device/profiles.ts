@@ -397,12 +397,16 @@ export const VLLOGIC_PROFILE: DeviceProfile = {
   digital: {
     maxChannels: VLLOGIC_NUM_CHANNELS,
     groups: [{ start: 0, channels: VLLOGIC_NUM_CHANNELS }],
-    widths: [4, 8, 16, 20],
+    widths: [2, 4, 8, 16, 20],
+    // The Logic20's rates are its own table (1200/600/300/150/120/80/40/20 + the three
+    // host-decimated slow rates), so the tiers are written out: rateTier()'s generic
+    // 400 MB/s recommendation would name rates this device does not offer.
     rates: [
-      rateTier(4, 800_000_000, VLLOGIC_LINK_RATES),
-      rateTier(8, 400_000_000, VLLOGIC_LINK_RATES),
-      rateTier(16, 200_000_000, VLLOGIC_LINK_RATES),
-      rateTier(20, 160_000_000, VLLOGIC_LINK_RATES),
+      { channels: 2, hz: { ss5: 1_200_000_000 }, recommendedHz: { ss5: 1_200_000_000 } },
+      { channels: 4, hz: { ss5: 600_000_000 }, recommendedHz: { ss5: 600_000_000 } },
+      { channels: 8, hz: { ss5: 300_000_000 }, recommendedHz: { ss5: 300_000_000 } },
+      { channels: 16, hz: { ss5: 150_000_000 }, recommendedHz: { ss5: 150_000_000 } },
+      { channels: 20, hz: { ss5: 120_000_000 }, recommendedHz: { ss5: 80_000_000 } },
     ],
     sampleratesHz: VLLOGIC_RATES.map((entry) => entry.rate),
     thresholdVolts: VLLOGIC_THRESHOLD_PRESETS,

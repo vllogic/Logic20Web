@@ -24,8 +24,10 @@ import {
   vllogicMapBuild,
   vllogicMaxChannels,
   vllogicPwmToThreshold,
+  vllogicRateFor,
   vllogicRateForDiv,
   vllogicThresholdToPwm,
+  VllogicDecimator,
 } from './vllogicProtocol.js';
 import { VllogicDevice, vllogicReadTuning } from './vllogic.js';
 import { PlanarSampleStore } from '../data/planarStore.js';
@@ -191,18 +193,36 @@ async function main(): Promise<void> {
   check(
     'div table and channel ceilings follow the hardware rules',
     vllogicDivForRate(20_000_000) === 120 &&
-      vllogicDivForRate(100_000_000) === 24 &&
-      vllogicDivForRate(160_000_000) === 15 &&
+      vllogicDivForRate(120_000_000) === 20 &&
+      vllogicDivForRate(150_000_000) === 16 &&
       vllogicDivForRate(1_200_000_000) === 2 &&
+      vllogicDivForRate(100_000_000) === null &&
       vllogicDivForRate(123_456) === null &&
-      vllogicRateForDiv(15) === 160_000_000 &&
-      vllogicMaxChannels(160_000_000) === 20 &&
-      vllogicMaxChannels(200_000_000) === 16 &&
-      vllogicMaxChannels(400_000_000) === 8 &&
-      vllogicMaxChannels(800_000_000) === 4 &&
-      vllogicMaxChannels(1_200_000_000) === 2,
+      vllogicRateForDiv(16) === 150_000_000 &&
+      vllogicRateFor(10_000_000)?.decimate === 2 &&
+      vllogicRateFor(5_000_000)?.decimate === 4 &&
+      vllogicRateFor(2_500_000)?.decimate === 8 &&
+      vllogicMaxChannels(1_200_000_000) === 2 &&
+      vllogicMaxChannels(600_000_000) === 4 &&
+      vllogicMaxChannels(300_000_000) === 8 &&
+      vllogicMaxChannels(150_000_000) === 16 &&
+      vllogicMaxChannels(120_000_000) === 20 &&
+      vllogicMaxChannels(80_000_000) === 20,
     'div/rate/ceiling table',
   );
+
+  {
+    // Two source words hold 64 samples; factor 2 keeps 32 of them, exactly one word.
+    const half = new VllogicDecimator(1, 2);
+    const out = new Uint32Array(4);
+    const src = new Uint32Array([0x55555555, 0x55555555]);
+    const written = half.decimate(0, src, out);
+    check(
+      'host decimation keeps every Nth sample and carries the tail',
+      written === 1 && out[0] === 0xFFFFFFFF,
+      `written=${written} out=${out[0]?.toString(16)}`,
+    );
+  }
   const at165 = vllogicThresholdToPwm(1.65);
   const atMinus25 = vllogicThresholdToPwm(-2.5);
   const at5 = vllogicThresholdToPwm(5.0);

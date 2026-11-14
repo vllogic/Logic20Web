@@ -53,16 +53,18 @@ export class WorkerVllogicDevice implements Device {
   readonly maxChannels = VLLOGIC_NUM_CHANNELS;
   readonly sampleratesHz = VLLOGIC_RATES.map((entry) => entry.rate);
   readonly maxSamplerateHz: Readonly<Record<number, number>> = {
-    4: 800_000_000,
-    8: 400_000_000,
-    16: 200_000_000,
-    20: 160_000_000,
+    2: 1_200_000_000,
+    4: 600_000_000,
+    8: 300_000_000,
+    16: 150_000_000,
+    20: 120_000_000,
   };
   readonly recommendedSamplerateHz: Readonly<Record<number, number>> = {
-    4: 800_000_000,
-    8: 400_000_000,
-    16: 200_000_000,
-    20: 100_000_000,
+    2: 1_200_000_000,
+    4: 600_000_000,
+    8: 300_000_000,
+    16: 150_000_000,
+    20: 80_000_000,
   };
   readonly thresholdRange = { min: -2.5, max: 5.0 };
   readonly thresholdPresets = VLLOGIC_THRESHOLD_PRESETS;

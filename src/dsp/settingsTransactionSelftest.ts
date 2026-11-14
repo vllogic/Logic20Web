@@ -77,6 +77,8 @@ const ALL_ANALOG: readonly AnalogTriggerKind[] = ['rising', 'falling'];
 
 function digitalCeiling(channels: ChannelCount): number {
   switch (channels) {
+    case 2:
+      return 1200e6;
     case 4:
       return 800e6;
     case 8:

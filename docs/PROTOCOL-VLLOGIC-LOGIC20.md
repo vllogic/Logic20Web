@@ -137,33 +137,37 @@ otherwise show "Capturing" forever.
 
 The ISERDES clock is 2.4 GHz. The browser table is:
 
-| Rate | Divider |
-| --- | --- |
-| 20 MHz | 120 |
-| 40 MHz | 60 |
-| 80 MHz | 30 |
-| 100 MHz | 24 |
-| 160 MHz | 15 |
-| 200 MHz | 12 |
-| 400 MHz | 6 |
-| 800 MHz | 3 |
-| 1200 MHz | 2 |
+| Output rate | Divider | Host decimation |
+| --- | --- | --- |
+| 1200 MHz | 2 | 1 |
+| 600 MHz | 4 | 1 |
+| 300 MHz | 8 | 1 |
+| 150 MHz | 16 | 1 |
+| 120 MHz | 20 | 1 |
+| 80 MHz | 30 | 1 |
+| 40 MHz | 60 | 1 |
+| 20 MHz | 120 | 1 |
+| 10 MHz | 120 | 2 |
+| 5 MHz | 120 | 4 |
+| 2.5 MHz | 120 | 8 |
+
+The slow three keep the device at 20 MHz and drop every second/fourth/eighth
+sample on the host (the native driver's PC decimation factor), because the
+ISERDES divider bottoms out at 120.
 
 The FPGA silently drops snapshots above its channel/rate envelope, so the
-profile refuses these combinations:
+profile refuses these combinations (2.4 Gbit/s in every row):
 
 | Output rate | Maximum lanes |
 | --- | --- |
-| > 800 MHz | 2 |
-| > 400 MHz | 4 |
-| > 200 MHz | 8 |
-| > 160 MHz | 16 |
-| <= 160 MHz | 20 |
+| 1200 MHz | 2 |
+| 600 MHz | 4 |
+| 300 MHz | 8 |
+| 150 MHz | 16 |
+| <= 120 MHz | 20 |
 
-At 5 Gbit/s the sustained 400 MB/s ceiling makes 20 lanes at 160 MHz the top
-20-lane rate; 16 lanes reach 200 MHz, 8 reach 400 MHz and 4 reach 800 MHz. The
-default 20-lane recommendation is 100 MHz (250 MB/s), leaving headroom while the
-transport still runs on the page thread.
+The default 20-lane recommendation is 80 MHz (200 MB/s); 120 MHz is the
+20-lane ceiling.
 
 ## Comparator threshold
 

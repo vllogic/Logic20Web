@@ -86,30 +86,39 @@ export const VLLOGIC_CHANNEL_PERM: readonly number[] = [
 ];
 
 /**
- * The rates the driver offers without host-side decimation. The lower entries
- * (2.5/5/10 MHz) use div 120 plus a PC decimation factor; the browser path starts
- * with the div-only table and can add decimation later without changing the wire
- * protocol.
+ * The rates the driver offers. The 2.4 GHz ISERDES divider covers 20..1200 MHz; the
+ * slower 10/5/2.5 MHz entries keep the device at 20 MHz (div 120) and drop every
+ * second/fourth/eighth sample on the host, which is exactly what the native driver
+ * calls the "PC decimation" factor.
+ *
+ * The channel ceilings in `vllogicMaxChannels()` keep every row at or below 2.4 Gbit/s:
+ * 1200x2 = 600x4 = 300x8 = 150x16 = 120x20.
  */
 export interface VllogicRate {
   readonly rate: number;
   readonly div: number;
+  /** Host-side decimation: keep every Nth sample the device streams. */
+  readonly decimate: number;
 }
 
 export const VLLOGIC_RATES: readonly VllogicRate[] = [
-  { rate: 20_000_000, div: 120 },
-  { rate: 40_000_000, div: 60 },
-  { rate: 80_000_000, div: 30 },
-  // 100 MHz is not in the libsigrok table (which jumps 80 -> 160), but div 24 is a
-  // legal ISERDES divider and the 250 MB/s it needs at 20 lanes is a useful half-way
-  // point between the 20-lane 160 MHz ceiling and the 80 MHz default.
-  { rate: 100_000_000, div: 24 },
-  { rate: 160_000_000, div: 15 },
-  { rate: 200_000_000, div: 12 },
-  { rate: 400_000_000, div: 6 },
-  { rate: 800_000_000, div: 3 },
-  { rate: 1_200_000_000, div: 2 },
+  { rate: 2_500_000, div: 120, decimate: 8 },
+  { rate: 5_000_000, div: 120, decimate: 4 },
+  { rate: 10_000_000, div: 120, decimate: 2 },
+  { rate: 20_000_000, div: 120, decimate: 1 },
+  { rate: 40_000_000, div: 60, decimate: 1 },
+  { rate: 80_000_000, div: 30, decimate: 1 },
+  { rate: 120_000_000, div: 20, decimate: 1 },
+  { rate: 150_000_000, div: 16, decimate: 1 },
+  { rate: 300_000_000, div: 8, decimate: 1 },
+  { rate: 600_000_000, div: 4, decimate: 1 },
+  { rate: 1_200_000_000, div: 2, decimate: 1 },
 ];
+
+/** The table entry for an exact rate, or null when the table does not offer it. */
+export function vllogicRateFor(rate: number): VllogicRate | null {
+  return VLLOGIC_RATES.find((candidate) => candidate.rate === rate) ?? null;
+}
 
 /**
  * Comparator presets shown in the UI. The comparator accepts the measured -2.5..+5.0 V
@@ -119,25 +128,72 @@ export const VLLOGIC_THRESHOLD_PRESETS: readonly number[] = [
   -2.5, -2, -1.5, -1, -0.5, 0, 0.5, 1, 1.2, 1.65, 2, 2.5, 3.3, 5,
 ];
 
-/** Applies the device's own per-rate channel ceiling (see vllogic_max_channels()). */
+/** Applies the device's per-rate channel ceiling (see vllogic_max_channels()). */
 export function vllogicMaxChannels(rate: number): number {
-  if (rate > 800_000_000) return 2;
-  if (rate > 400_000_000) return 4;
-  if (rate > 200_000_000) return 8;
-  if (rate > 160_000_000) return 16;
+  // 2.4 Gbit/s envelope: 1200x2, 600x4, 300x8, 150x16, 120x20.
+  if (rate >= 1_200_000_000) return 2;
+  if (rate >= 600_000_000) return 4;
+  if (rate >= 300_000_000) return 8;
+  if (rate >= 150_000_000) return 16;
   return VLLOGIC_NUM_CHANNELS;
 }
 
 /** The exact div entry for a rate, or null when the table does not offer it. */
 export function vllogicDivForRate(rate: number): number | null {
-  const entry = VLLOGIC_RATES.find((candidate) => candidate.rate === rate);
-  return entry ? entry.div : null;
+  return vllogicRateFor(rate)?.div ?? null;
 }
 
-/** The table's exact rate for a div, or null. */
+/**
+ * The table's first rate for a div, or null. 120 now maps to four entries (20/10/5/2.5
+ * MHz), so this only answers "does a div exist"; callers that need the rate itself use
+ * `vllogicRateFor()`.
+ */
 export function vllogicRateForDiv(div: number): number | null {
-  const entry = VLLOGIC_RATES.find((candidate) => candidate.div === div);
-  return entry ? entry.rate : null;
+  const matches = VLLOGIC_RATES.filter((candidate) => candidate.div === div);
+  // div 120 carries four rates now (20/10/5/2.5 MHz), so only a unique div answers.
+  return matches.length === 1 ? matches[0]!.rate : null;
+}
+
+/**
+ * Host-side decimation for the slow rates. The device streams at div 120 and every
+ * `factor`th sample is kept; a factor of 1 is the identity.
+ *
+ * Words are 32 samples, and factor divides 32, so each source word contributes exactly
+ * 32/factor samples. Bits left over at a batch boundary are carried to the next call.
+ */
+export class VllogicDecimator {
+  private readonly carries: Uint32Array;
+  private readonly carryBits: Uint32Array;
+
+  constructor(channels: number, private readonly factor: number) {
+    if (!Number.isInteger(factor) || factor < 1 || factor & (factor - 1)) {
+      throw new Error(`decimation factor must be a power of two, got ${factor}`);
+    }
+    this.carries = new Uint32Array(channels);
+    this.carryBits = new Uint32Array(channels);
+  }
+
+  /** Decimate one channel's source words into `out`; returns the whole words written. */
+  decimate(channel: number, src: Uint32Array, out: Uint32Array): number {
+    const f = this.factor;
+    let acc = this.carries[channel]!;
+    let bits = this.carryBits[channel]!;
+    let written = 0;
+    for (let i = 0; i < src.length; i++) {
+      const word = src[i]!;
+      for (let b = 0; b < 32; b += f) {
+        acc |= ((word >>> b) & 1) << bits;
+        if (++bits === 32) {
+          out[written++] = acc >>> 0;
+          acc = 0;
+          bits = 0;
+        }
+      }
+    }
+    this.carries[channel] = acc;
+    this.carryBits[channel] = bits;
+    return written;
+  }
 }
 
 /** CRC-16/CCITT-FALSE over W1..W3's 12 on-wire bytes (poly 0x1021, init 0xFFFF). */

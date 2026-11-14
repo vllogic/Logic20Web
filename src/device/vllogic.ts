@@ -38,10 +38,11 @@ import {
   VllogicParser,
   vllogicBuildCommand,
   vllogicBuildLut,
-  vllogicDivForRate,
   vllogicMapBuild,
   vllogicMaxChannels,
+  vllogicRateFor,
   vllogicThresholdToPwm,
+  VllogicDecimator,
   type VllogicChannelMap,
   type VllogicParserStats,
 } from './vllogicProtocol.js';
@@ -175,16 +176,18 @@ export class VllogicDevice implements Device {
   readonly maxChannels = VLLOGIC_NUM_CHANNELS;
   readonly sampleratesHz = VLLOGIC_RATES.map((entry) => entry.rate);
   readonly maxSamplerateHz: Readonly<Record<number, number>> = {
-    4: 800_000_000,
-    8: 400_000_000,
-    16: 200_000_000,
-    20: 160_000_000,
+    2: 1_200_000_000,
+    4: 600_000_000,
+    8: 300_000_000,
+    16: 150_000_000,
+    20: 120_000_000,
   };
   readonly recommendedSamplerateHz: Readonly<Record<number, number>> = {
-    4: 800_000_000,
-    8: 400_000_000,
-    16: 200_000_000,
-    20: 100_000_000,
+    2: 1_200_000_000,
+    4: 600_000_000,
+    8: 300_000_000,
+    16: 150_000_000,
+    20: 80_000_000,
   };
   /** Measured comparator range, see vllogicThresholdToPwm(). */
   readonly thresholdRange = { min: -2.5, max: 5.0 };
@@ -201,6 +204,9 @@ export class VllogicDevice implements Device {
   /** One word-run per physical lane, reused for every batch (no per-batch garbage). */
   private runBuffers: Uint32Array[] = [];
   private emittedSamples = 0;
+  /** Host-side decimation for the slow rates (10/5/2.5 MHz keep every 2/4/8th). */
+  private decimator: VllogicDecimator | null = null;
+  private decimateBuffers: Uint32Array[] = [];
   private targetSamples = 0;
   private onCaptureEnd: (() => void) | null = null;
   private ended = false;
@@ -334,8 +340,8 @@ export class VllogicDevice implements Device {
     if (this.running) throw new Error('VLLogic capture already running');
     if (options?.loop) throw new Error('VLLogic captures do not support loop mode yet');
 
-    const div = vllogicDivForRate(cfg.samplerate);
-    if (div === null) {
+    const rate = vllogicRateFor(cfg.samplerate);
+    if (rate === null) {
       throw new DiagnosticError('device.unsupportedSamplerate', { rate: cfg.samplerate });
     }
     const widthLimit = vllogicMaxChannels(cfg.samplerate);
@@ -353,7 +359,7 @@ export class VllogicDevice implements Device {
       throw new DiagnosticError('device.threshold', { volts: cfg.thresholdVolts });
     }
 
-    await this.configure(map, div, pwm);
+    await this.configure(map, rate.div, pwm);
 
     this.map = map;
     this.sink = sink;
@@ -375,6 +381,13 @@ export class VllogicDevice implements Device {
     this.runBuffers = Array.from(
       { length: map.nchan }, () => new Uint32Array(maxSnapshots),
     );
+    this.decimator = rate.decimate > 1
+      ? new VllogicDecimator(map.nchan, rate.decimate)
+      : null;
+    this.decimateBuffers = this.decimator
+      ? Array.from({ length: map.nchan },
+        () => new Uint32Array(Math.ceil(maxSnapshots / rate.decimate) + 1))
+      : [];
     const epoch = ++this.captureEpoch;
     this.parser = new VllogicParser(map, (words, snapshots) => {
       if (epoch === this.captureEpoch) this.acceptBatch(words, snapshots);
@@ -489,16 +502,34 @@ export class VllogicDevice implements Device {
       if (remaining <= 0) return;
       snapshots = Math.min(snapshots, Math.ceil(remaining / 32));
     }
-    const start = this.emittedSamples;
-    const samples = snapshots * 32;
-    sink.begin?.(map.logical);
+    // Deinterleave first, then decimate per channel. The decimator carries the bits
+    // that do not fill a whole output word across batches, so the committed sample
+    // count stays a multiple of 32.
     for (let i = 0; i < map.physList.length; i++) {
       const run = this.runBuffers[i]!;
       for (let s = 0; s < snapshots; s++) run[s] = words[s * map.nchan + i]!;
+    }
+    let outWords = snapshots;
+    let outBuffers = this.runBuffers;
+    if (this.decimator) {
+      let produced = 0;
+      for (let i = 0; i < map.physList.length; i++) {
+        produced = this.decimator.decimate(
+          i, this.runBuffers[i]!.subarray(0, snapshots), this.decimateBuffers[i]!,
+        );
+      }
+      outWords = produced;
+      outBuffers = this.decimateBuffers;
+      if (outWords === 0) return;
+    }
+    const start = this.emittedSamples;
+    const samples = outWords * 32;
+    sink.begin?.(map.logical);
+    for (let i = 0; i < map.physList.length; i++) {
       const physical = map.physList[i]!;
       const logical = map.phys2log[physical]!;
       if (logical < 0) continue;
-      sink.channel(logical, start, run.subarray(0, snapshots));
+      sink.channel(logical, start, outBuffers[i]!.subarray(0, outWords));
     }
     sink.commit(samples);
     this.emittedSamples += samples;

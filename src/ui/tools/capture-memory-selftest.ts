@@ -50,7 +50,7 @@ function check(name: string, pass: boolean, detail: string): void {
 
 {
   const want: Record<ChannelCount, number> = {
-    4: 2 ** 31 - 1, 8: 2 ** 31 - 1, 16: 2 ** 30, 20: Math.floor(2 ** 31 / 3),
+    2: 2 ** 31 - 1, 4: 2 ** 31 - 1, 8: 2 ** 31 - 1, 16: 2 ** 30, 20: Math.floor(2 ** 31 / 3),
     32: 2 ** 29, 64: 2 ** 28, 128: 2 ** 27,
   };
   const rows = CHANNEL_COUNTS.map((c) => {

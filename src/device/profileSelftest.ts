@@ -580,9 +580,10 @@ check(
           : link === 'ss5'
             ? Math.min(native, USB3_5G_PAYLOAD_BPS / channels)
             : native;
+        const table = profile.digital.sampleratesHz ?? SAMPLERATES_HZ;
         for (let i = 0; i < rates.length; i++) {
           const rate = rates[i]!;
-          if (!SAMPLERATES_HZ.includes(rate)) problems.push(`${label} invents ${rate} Hz`);
+          if (!table.includes(rate)) problems.push(`${label} invents ${rate} Hz`);
           if (i > 0 && rate <= rates[i - 1]!) problems.push(`${label} is not ascending`);
           if (rate > ceiling) problems.push(`${label} ${rate} exceeds ceiling ${ceiling}`);
         }
@@ -750,13 +751,16 @@ check(
   );
   // The derivation: wire load at the recommendation is 200 MB/s, below the 400 MB/s ceiling.
   check(
-    'each recommendation carries 200 MB/s and sits strictly below its ss5 ceiling',
+    'each recommendation sits below its ss5 ceiling and inside the 400 MB/s link',
     PROFILES.every((profile) => profile.digital.rates.every((tier) => {
       const advice = tier.recommendedHz?.ss5;
       const ceiling = tier.hz.ss5!;
-      return advice === undefined
-        ? ceiling * tier.channels / 8 <= 200e6
-        : advice * tier.channels / 8 === 200e6 && advice < ceiling;
+      if (advice === undefined) return ceiling * tier.channels / 8 <= 200e6;
+      const load = advice * tier.channels / 8;
+      // The SLogic tiers were measured at 200 MB/s (strictly below their ceiling); the
+      // Logic20 recommends its full tier, which may sit at the ceiling.
+      if (profile.id === 'vllogic-logic20') return advice <= ceiling && load <= 400e6;
+      return advice < ceiling && load === 200e6;
     })),
     PROFILES.map((profile) => `${profile.id}: ${profile.digital.rates
       .map((tier) => `${tier.channels}ch ${tier.recommendedHz?.ss5 ?? '-'}/${tier.hz.ss5}`).join(', ')}`)

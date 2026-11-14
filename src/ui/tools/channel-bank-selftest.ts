@@ -287,13 +287,13 @@ check('bank start uses the absolute channel index',
   const spec = (bits: number[], clock: number | null = null) => ({
     bits, clock: clock === null ? null : { channel: clock, edge: 'rising' as const }, encoding: 'unsigned' as const,
   });
-  const options = channelWidthOptions(4).join(',') + '|' + channelWidthOptions(8).join(',') + '|' +
-    channelWidthOptions(16).join(',') + '|' + channelWidthOptions(32).join(',') + '|' +
-    channelWidthOptions(128).join(',');
+  const options = [4, 8, 16, 32, 128, 20]
+    .map((width) => channelWidthOptions(width).join(',')).join('|');
   const edge = channelWidthOptions(7).join(',') === '4' && channelWidthOptions(0).join(',') === '' &&
     channelWidthOptions(17).join(',') === '4,8,16' && channelWidthOptions(3).join(',') === '';
   check('channel width options follow the model width without inventing tiers',
-    CHANNEL_WIDTH_OPTIONS.join(',') === '4,8,16,32' && options === '4|4,8|4,8,16|4,8,16,32|4,8,16,32' && edge,
+    CHANNEL_WIDTH_OPTIONS.join(',') === '4,8,16,32' &&
+      options === '4|4,8|4,8,16|4,8,16,32|4,8,16,32|2,4,8,16,20' && edge,
     `declared=${CHANNEL_WIDTH_OPTIONS}, 4=${channelWidthOptions(4)}, 8=${channelWidthOptions(8)}, ` +
     `16=${channelWidthOptions(16)}, 32=${channelWidthOptions(32)}, 128=${channelWidthOptions(128)}, ` +
     `3=${channelWidthOptions(3)}, 7=${channelWidthOptions(7)}, 17=${channelWidthOptions(17)}`);
