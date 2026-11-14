@@ -49,7 +49,8 @@ export function thresholdOptionParts(volts: number): { label: string; note: stri
   if (family.kind === 'ttl') return { label, note: t('capturePanel.thresholdTtlNote') };
   return {
     label,
-    note: t('capturePanel.thresholdCmosNote', { logic: family.supplyVolts }),
+    // One decimal so the 5 V family reads "5.0 V CMOS" beside 1.2/1.8/3.3.
+    note: t('capturePanel.thresholdCmosNote', { logic: family.supplyVolts.toFixed(1) }),
   };
 }
 
