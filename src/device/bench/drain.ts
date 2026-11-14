@@ -236,7 +236,9 @@ async function runCycle(cycle: number): Promise<CycleResult> {
   base.transfers = device.readStats.transfers;
   base.shortReads = device.readStats.shortReads;
   base.peakInFlight = device.readStats.peakInFlight;
-  base.lineMBs = device.readStats.bytes / 1e6 / dataSec;
+  // Store bytes, not wire bytes: the tail drain reads (and discards) ~20 ms more
+  // than the budget, which would inflate a wire-rate computed over the data window.
+  base.lineMBs = (store.length * channels / 8) / 1e6 / dataSec;
   base.parser = device.parserStats
     ? {
       acks: device.parserStats.acks,
