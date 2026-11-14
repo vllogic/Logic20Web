@@ -8,7 +8,7 @@
  */
 
 import {
-  VLLOGIC_FIFO_HARD_MBPS, VLLOGIC_LINK_MBPS,
+  VLLOGIC_FIFO_HARD_MBPS, VLLOGIC_LINK_MBPS, VLLOGIC_DEFAULT_RATE_HZ,
   aboveLinkLimit, exceedsHardLimit, formatChannelList, maxChannelsForBandwidth,
   selectionBandwidthMbps, trimChannelSelection, type ChannelSelection,
 } from '../channelBandwidth.js';
@@ -136,8 +136,19 @@ check(
   const app = fs.readFileSync('src/ui/app.ts', 'utf8');
   const panel = fs.readFileSync('src/ui/capturePanel.ts', 'utf8');
   const sheet = fs.readFileSync('src/ui/style.css', 'utf8');
+  const workspace = fs.readFileSync('src/ui/workspacePreferences.ts', 'utf8');
   const locales = ['en', 'fr', 'ru', 'zh-CN'].map((name) =>
     fs.readFileSync(`src/ui/locales/${name}.ts`, 'utf8'));
+  check(
+    'the page opens on the Logic20 80 MS/s default',
+    VLLOGIC_DEFAULT_RATE_HZ === 80_000_000 &&
+      app.includes("VLLOGIC_DEFAULT_RATE_HZ") &&
+      app.includes('!this.samplerateExplicit && offered.includes(VLLOGIC_DEFAULT_RATE_HZ)') &&
+      app.includes('samplerate: this.samplerateExplicit ? (workspace?.capture?.samplerate ?? 80e6) : 80e6') &&
+      workspace.includes('RESTORABLE_SAMPLERATES_HZ') &&
+      workspace.includes('...VLLOGIC_RATES.map((entry) => entry.rate)'),
+    `lane=${VLLOGIC_DEFAULT_RATE_HZ} restore=${workspace.includes('RESTORABLE_SAMPLERATES_HZ')}`,
+  );
   const wired = app.includes('selectedChannels: this.selectedChannels()') &&
     app.includes('store.setActiveChannels?.(cfg.selectedChannels)') &&
     app.includes('this.captureLimitSamples + 32, cfg.selectedChannels') &&

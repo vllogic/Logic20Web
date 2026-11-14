@@ -1,5 +1,6 @@
 import { isChannelCount, type ChannelCount } from '../types.js';
 import { SAMPLERATES_HZ } from '../device/index.js';
+import { VLLOGIC_RATES } from '../device/vllogicProtocol.js';
 import { validateBusSpec } from '../data/index.js';
 import {
   ANALOG_MAX_HALF_RANGE_V, analogGainOf, analogSpan, busChannelBank, isAnalogGain,
@@ -30,6 +31,11 @@ const MAX_DECODER_CHANNELS = 64;
 const ANALYZER_TOKEN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ANALYZER_ID = /^[a-z0-9_-]+-\d+$/;
 const CANONICAL_INDEX_KEY = /^(0|[1-9]\d*)$/;
+
+const RESTORABLE_SAMPLERATES_HZ = new Set<number>([
+  ...SAMPLERATES_HZ,
+  ...VLLOGIC_RATES.map((entry) => entry.rate),
+]);
 
 export interface PersistedChannel {
   name: string;
@@ -183,7 +189,7 @@ function restoreCapture(value: unknown, capacity: number): PersistedCaptureSetti
     capture.channels = value.channels;
   }
   if (value.widthExplicit === true) capture.widthExplicit = true;
-  if (typeof value.samplerate === 'number' && SAMPLERATES_HZ.includes(value.samplerate)) {
+  if (typeof value.samplerate === 'number' && RESTORABLE_SAMPLERATES_HZ.has(value.samplerate)) {
     capture.samplerate = value.samplerate;
   }
   if (value.samplerateExplicit === true) capture.samplerateExplicit = true;

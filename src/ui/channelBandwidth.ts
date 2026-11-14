@@ -15,6 +15,7 @@
  */
 
 import {
+  VLLOGIC_DEFAULT_RATE_HZ,
   VLLOGIC_FIFO_HARD_MBPS,
   VLLOGIC_FIFO_MBPS,
   VLLOGIC_LINK_MBPS,
@@ -25,6 +26,7 @@ import {
 } from '../device/vllogicBandwidth.js';
 
 export {
+  VLLOGIC_DEFAULT_RATE_HZ,
   VLLOGIC_FIFO_HARD_MBPS,
   VLLOGIC_FIFO_MBPS,
   VLLOGIC_LINK_MBPS,

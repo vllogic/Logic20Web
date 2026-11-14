@@ -172,7 +172,8 @@ import {
   loopDurationSeconds,
 } from './capturePolicy.js';
 import {
-  VLLOGIC_FIFO_HARD_MBPS, VLLOGIC_LINK_MBPS, selectionBandwidthMbps, trimChannelSelection,
+  VLLOGIC_DEFAULT_RATE_HZ, VLLOGIC_FIFO_HARD_MBPS, VLLOGIC_LINK_MBPS,
+  selectionBandwidthMbps, trimChannelSelection,
 } from './channelBandwidth.js';
 import {
   captureStartHoldDue, emptyHintVisible, planCaptureStartDisplay,
@@ -501,7 +502,12 @@ export class App {
   private bandwidthNotice: {
     closed: readonly number[]; bandwidthMbps: number; limitMbps: number;
   } | null = null;
-  private rateCeilings: Readonly<Record<number, number>> = MAX_SAMPLERATE_HZ;
+  private rateCeilings: Readonly<Record<number, number>> = {
+    ...MAX_SAMPLERATE_HZ,
+    // The empty 20-lane model before a Logic20 connects: every offered rate is valid,
+    // the FIFO/selection rule trims lanes once the board is known.
+    20: 1_200_000_000,
+  };
   /** The board's per-width default rates (`Device.recommendedSamplerateHz`). */
   private rateRecommendations: Readonly<Record<number, number>> = {};
   private running = false;
@@ -760,6 +766,9 @@ export class App {
       ...defaultCaptureSettings(),
       ...(workspace?.capture ?? {}),
       channels: initialWidth,
+      // The page opens on the Logic20 default (80 MS/s) unless the user explicitly
+      // picked a rate in an earlier session.
+      samplerate: this.samplerateExplicit ? (workspace?.capture?.samplerate ?? 80e6) : 80e6,
       triggerModes,
       triggerConditions,
       triggerChannel: first?.channel ?? 0,
@@ -6245,13 +6254,26 @@ export class App {
     const width = device.sampleLayout === 'channel-major'
       ? max
       : this.widthExplicit && this.settings.channels < max ? this.settings.channels : max;
-    const samplerate = connectSamplerate({
+    let samplerate = connectSamplerate({
       current: this.settings.samplerate,
       explicit: this.samplerateExplicit,
       channels: width,
       ceilings: this.rateCeilings,
       recommended: this.rateRecommendations,
     });
+    if (device.sampleLayout === 'channel-major' && device.sampleratesHz?.length) {
+      const offered = device.sampleratesHz;
+      // The page's lane default is 80 MS/s; a non-explicit session lands there even if
+      // an old workspace carried 16 MS/s. An explicit rate is kept if the board offers
+      // it, otherwise snapped to the fastest offered rate below it.
+      if (!this.samplerateExplicit && offered.includes(VLLOGIC_DEFAULT_RATE_HZ)) {
+        samplerate = VLLOGIC_DEFAULT_RATE_HZ;
+      }
+      if (!offered.includes(samplerate)) {
+        const below = offered.filter((rate) => rate <= samplerate);
+        samplerate = below.length > 0 ? below[below.length - 1]! : offered[0]!;
+      }
+    }
     if (this.store.length === 0 && max !== this.store.channelCount) {
       // The empty store is still rendered before Start is pressed. Grow it together with
       // the channel rows; otherwise row 16 of a newly-connected 32U3 is queried against

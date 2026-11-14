@@ -15,6 +15,8 @@ export const VLLOGIC_FIFO_MBPS = 4800;
 export const VLLOGIC_FIFO_HARD_MBPS = 4500;
 /** Measured USB 3 / host scheduling ceiling, Mbit/s; advisory only. */
 export const VLLOGIC_LINK_MBPS = 2560;
+/** Default sample rate the Logic20 page opens on, Hz (20 lanes = 1600 Mbit/s). */
+export const VLLOGIC_DEFAULT_RATE_HZ = 80_000_000;
 
 /** `count` lanes at `rateHz` each, in Mbit/s. */
 export function selectionBandwidthMbps(count: number, rateHz: number): number {

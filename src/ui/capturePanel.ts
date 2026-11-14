@@ -833,11 +833,16 @@ export class CapturePanel {
     // active analog group narrows the list to that PLL's divisors from 100 MHz up.
     const analogRates = activeBanks.size > 0 ? analogSamplerates(supported) : [];
     const selectable = analogRates.length > 0 ? analogRates : supported;
+    // A restored Logic20 rate can be absent from the no-device SLogic table; keep it in
+    // the list so the control always has a selection instead of rendering blank.
+    const offered = s.samplerate > 0 && !selectable.includes(s.samplerate)
+      ? [...selectable, s.samplerate].sort((a, b) => a - b)
+      : selectable;
     // Rates above the profile's sustainable one for this width stay selectable, but say
     // so in the list itself, before they are picked (the warning below only follows a
     // choice). A width without a measured recommendation marks nothing.
     const advisedHz = v.laneSelect ? undefined : v.recommendedSamplerateHz?.[s.channels];
-    const rateOptions = samplerateOptions(selectable, advisedHz);
+    const rateOptions = samplerateOptions(offered, advisedHz);
     const rate = selectControl(
       'capture.sampleRate',
       t('capturePanel.sampleRate'),
