@@ -121,18 +121,21 @@ bcdDevice `0x0820`, 20 MHz x 4 CH) because WebUSB cannot reproduce the native
   check waits for the first *data* block (`lastHeader` is only updated by payload
   blocks), so an ACK cannot trip `device.headerMismatch`.
 
-WebUSB has no cancellable `transferIn`, so two things replace the native drain:
+WebUSB has no cancellable `transferIn`, so three things replace the native drain:
 
-- `stop()` resolves the read loop's completion wait directly (`wakeLoop`); a board that
-  stops sending cannot park the loop for the rest of the page session. Outstanding
-  reads still get the 750 ms settle window, because they cannot be cancelled.
 - A pre-START drain (`?vllogic-drain=<ms>`, default `20`) races one `transferIn`
   against an idle window. Data completing inside the window is stale and discarded;
   the read that outlives it becomes the capture's sequence-0 read, so no reader is
-  left behind. The browser bench found a real reason to keep it on: after a stopped
-  16 CH / 160 MHz capture the endpoint still holds the ~128 KiB tail (see above), and
-  the next START would otherwise consume it as the new capture's first samples. The
-  drain clears it in 1-9 reads. `?vllogic-drain=0` disables it.
+  left behind. This clears the ~128 KiB tail a stopped 16 CH / 160 MHz capture can
+  leave in the endpoint.
+- A START barrier in the parser: after arming, every data block is discarded until
+  the board sends an ACK. A tail that survives the drain (or is in flight in the
+  pre-armed read) therefore cannot enter the new capture. This matters because a
+  same-mask tail whose word count is not a multiple of `nchan` rotates every
+  following snapshot, putting a signal on the wrong lane.
+- `stop()` resolves the read loop's completion wait directly (`wakeLoop`); a board that
+  stops sending cannot park the loop for the rest of the page session. Outstanding
+  reads still get the 750 ms settle window, because they cannot be cancelled.
 
 Loop capture is host-side for the Logic20: the board streams until STOP and the page
 keeps only the newest `loopRetentionLen` samples, dropping the front in large

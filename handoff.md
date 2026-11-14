@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-14，对应 `main` 的 `dbbd34f`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
+最后更新：2026-11-14，对应 `main` 的 `3dc24e9`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
 
 ---
 
@@ -94,6 +94,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **首块校验误报**：`acceptBatch` 只对 data block 的 header 做校验；START 的 ACK 不更新 `lastHeader`，不会触发 `device.headerMismatch`。
 - **mask 不符仍消费 payload**：parser 现在整块丢弃 mask 与配置不符的 payload（`discardPayload`），避免旧 lane 顺序混进采集；`maskMismatch` 仍计数。
 - **默认采样率必须是 80 MS/s**：页面打开/连接 Logic20 后就要选中它（20 lane × 80 MHz = 1600 Mbps，低于 2560 提示线）。旧 workspace 里非 explicit 的 16 MS/s 会被覆盖；显式选择保持，但必须 snap 到 Logic20 的速率表。不要改回只靠 `recommendedSamplerateHz`，否则某些 workspace 会显示 16 或空白。
+- **START 后只靠 pre-START drain 不够**：上一轮 STOP 后的尾部可能仍在端点上，且 mask 相同，parser 会把尾部当新数据。尾部 word 数不是 `nchan` 倍数时，整个采集的 snapshot 相位被旋转（D0 随机跑到 D4/D12）。现在 parser 有 START barrier：收到 ACK 前的所有 data block 丢弃，ACK 后从新流的 snapshot 边界开始。`preAckBlocks` 记录丢弃块数。
 - **旧的 2.4 Gbit/s 通道档位作废**：不要再按 `vllogicMaxChannels()` 的 2/4/8/16/20 档（那是旧的每行 2.4Gbit 规则）限制 UI。现行规则是任意 lane 子集 + 4500 Mbps 总带宽硬限制；`vllogicMaxChannels()` 只作为总带宽换算的辅助。
 - **通道芯片不再只是显示开关**：Logic20 上 `enabled` 决定本次采集的 lane 子集，`CaptureConfig.selectedChannels` 交给 transport；未选 lane 在 store 中没有平面。不要改回“采集前 N 路、芯片只隐藏行”。
 - **内存不能按 20 路固定分配**：`PlanarSampleStore` 的稀疏活跃集合是硬要求；未选通道不能 `extendTo()`/建 pyramid，否则选 1 路会膨胀 20 倍。
@@ -168,6 +169,12 @@ npm run dev
 - 结果 JSON 包含：采集/配置耗时、总线 MB/s、有效 MSa/s、transfers、平均/最大 transfer、短包、峰值在飞、commits、sink 写入耗时、解析器 stats。
 - 修复 `payload_len` 后，20 MHz×4CH×1s 应约 1 s、`bytes`≈10 MB、`effMSa`≈20；16CH@150MHz×0.25s 应约 0.25 s、`bytes`≈75 MB、`effMSa`≈150。
 - 注意：headless Chromium 里的 WebUSB/页面导航不可靠，必须用真实浏览器。
+
+### 评估页优化在主 APP 的落地情况
+
+已进入生产路径：pre-START drain（默认 20 ms）、START ACK barrier、`depth=64 × 256 KiB`、采集前 `reserveSamples`、120 Hz `ChannelMajorCoalescer`、Worker 读泵、预算达成后的 20 ms tail drain、可等待 `release()`。
+
+仍在评估页、未进主 APP：同一几何下复用 store（`cachedStore.reset()`；主 APP 每轮新建 store，Repeat 需要保留上一轮）、longtask/rAF 帧统计（诊断用）、可变 depth/read KiB/合并间隔（主 APP 用固定生产值，仅 URL 参数可调）。
 
 ### START 前排空验证页（2026-11 新增）
 
@@ -265,6 +272,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 ## 9. 近期提交（截至交接）
 
 ```
+3dc24e9  fix(device): discard pre-ACK tail before a new Logic20 capture
 dbbd34f  fix(ui): open on the Logic20 80 MS/s default
 5f32e0a  feat(ui): select Logic20 lanes within the FIFO and link limits
 360177a  feat(device): stream arbitrary Logic20 lane subsets
