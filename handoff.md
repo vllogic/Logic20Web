@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-14，对应 `main` 的 `c20a354` 之后。
+最后更新：2026-11-14，对应 `main` 的 `7e0e47b`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值）。
 
 ---
 
@@ -29,8 +29,8 @@ src/device/workerVllogicDevice.ts 页面侧 Worker 包装（store 写入、stats
 src/device/vllogicWorkerProtocol.ts Worker 消息协议 + buffer 池回传
 src/device/vllogicProtocol.ts    UHSIF v2.2：CRC、LUT、通道映射、parser、div/阈值
 src/device/profiles.ts           Logic20 / SLogic profile、速率上限
-src/device/vllogicSelftest.ts    Logic20 离线自检（16 项）
-src/device/bench/                真实硬件评估页（不参与生产构建）
+src/device/vllogicSelftest.ts    Logic20 离线自检（24 项）
+src/device/bench/                真实硬件评估页（不参与生产构建；index.html / drain.html）
 src/data/planarStore.ts          channel-major 位平面存储 + min/max pyramid
 src/data/bitplane.ts             BitPlane（writeWords 快路径）
 src/data/channelMajorCoalescer.ts 120 Hz 合并提交（loop 下用 target.length 作帧起点）
@@ -40,6 +40,7 @@ src/ui/app.ts                    采集主流程；startChannelMajor 接入、ca
 src/ui/pwaUpdate.ts              SW 注册、升级图标、升级提示卡（3 s 自动收起）
 src/ui/locales/{en,zh-CN,fr,ru}.ts 四语言文案
 src/diagnostics.ts               诊断 code 列表（UI 文案在 diagnostic.device.*）
+src/device/tools/vllogic_drain_probe.py  pyusb 探针（无需浏览器）
 docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 dwords）
 ```
 
@@ -73,6 +74,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
    - 设备身份：接受 bcdDevice `0x0802` 或 `0x0820`，拒绝 Sniffer2 的 `0x0602`。
    - `drop_flag` 边沿通过 dropout sink 上报；`seq` 跳变、`partialSnapshots` 写入 parser stats。
    - Loop：设备无限流，app 在每次 120 Hz commit 后按 `loopRetentionLen` 丢弃前端（大块、512 对齐），`ChannelMajorCoalescer` 用 `store.length` 作为每帧起点；手动 Stop 不等 750 ms。
+   - 抽稀：10/5/2.5 MHz 设备仍按 20 MHz 流，`VllogicDecimator` 在 host 端每 2/4/8 个样本取一个，跨批保留余数，提交仍是 32 对齐。
    - 每次采集有 `captureEpoch`，旧 readLoop 不会污染新采集。
 4. `vllogicProtocol.ts` parser：CRC 失败重同步、跨块半 word/半 snapshot 保留、按 payload 批量回调；mask 不符的 payload 整块丢弃。
 5. `planarStore`：把每通道 words 直接写进位平面，并更新 pyramid。
@@ -105,7 +107,9 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 持续带宽上限 | 约 400 MB/s（原生实测） |
 | 接口 | Interface 0；Interface 1 是 DLDO，勿碰 |
 | 触发/Loop | 支持无触发 Loop（host 端保留最新窗口并 `dropFront`）；软件触发仍不支持 |
-| 阈值预设 | -2.5 / -1.5 / 0 / 0.6（1.2 V CMOS）/ 0.9（1.8 V）/ 1.6（3.3 V，默认）/ 2.5（5 V）/ 5 V + 自定义 |
+| 阈值预设 | -2.5 / -1.5 / 0 / 0.6（1.2 V CMOS）/ 0.9（1.8 V）/ 1.6（3.3 V，默认）/ 2.5（5.0 V CMOS）/ 5 V + 自定义 |
+| 测试模式 | Logic20 只有正常模式；采集面板对该设备隐藏测试模式行 |
+| OTA | 固件更新链接 `https://logic20.vllogic.com/ota/`（页面暂未发布，入口保留） |
 
 关键坑：
 
@@ -145,10 +149,10 @@ npm run dev
 # 打开 http://localhost:5173/src/device/bench/index.html
 ```
 
-- 默认 16 CH @ 160 MHz × 0.25 s（约 320 MB/s）。
+- 默认参数以当前速率表为准：常用 16 CH @ 150 MHz × 0.25 s（约 300 MB/s）或 20 CH @ 120 MHz。
 - 可改采样率、通道、时长、depth 列表、read KiB、合并提交（0 / 8.33 / 16.67 ms）。
 - 结果 JSON 包含：采集/配置耗时、总线 MB/s、有效 MSa/s、transfers、平均/最大 transfer、短包、峰值在飞、commits、sink 写入耗时、解析器 stats。
-- 修复 `payload_len` 后，20 MHz×4CH×1s 应约 1 s、`bytes`≈10 MB、`effMSa`≈20；16CH@160MHz×0.25s 应约 0.25 s、`bytes`≈80 MB、`effMSa`≈160。
+- 修复 `payload_len` 后，20 MHz×4CH×1s 应约 1 s、`bytes`≈10 MB、`effMSa`≈20；16CH@150MHz×0.25s 应约 0.25 s、`bytes`≈75 MB、`effMSa`≈150。
 - 注意：headless Chromium 里的 WebUSB/页面导航不可靠，必须用真实浏览器。
 
 ### START 前排空验证页（2026-11 新增）
@@ -170,7 +174,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 
 - `--mode web|drain|c-driver` 分别模拟浏览器现状、空闲探测、libsigrok 的逐条 ACK + `sync_drain(32×5ms)`。
 - `--stall-ms 1500` 模拟页面卡住（设备 FIFO 溢出、drop latch），用来看 STOP 后是否留下旧数据块。
-- 结论（2026-11-14，固件 `0x0820`）：配置 ACK 不会无限堆积；STOP+FLUSH 后没有旧数据块；START 后首块是 ACK。因此 drain 默认关闭。
+- 结论（2026-11-14，固件 `0x0820`）：配置 ACK 不会无限堆积；STOP+FLUSH 后没有旧数据块；START 后首块是 ACK。生产默认仍保留 20 ms 排空，因为高负载下上一轮 STOP 后的尾部会残留在端点。
 
 ---
 
@@ -212,7 +216,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
    - **最终配置**：depth **64**（64 × 256 KiB ≈ 16 MiB 请求窗口，Linux 需 `usbfs_memory_mb >= 16`）+ 预分配 + 复用 store，0.5 s × 20 轮 **0/20 drop**；慢帧仍有（`frameMax` 最大 49.8 ms、`frameSlow` 0–15），但被缓冲吸收；`runMs` 500–582 ms（停顿会拉长采集时间，不丢样）。
    - 收尾 drain（`TAIL_DRAIN_MS=20`）仍保留，专门防“预算达成后停止读”造成的尾部溢出。
    - pyusb 侧 20 MHz×4CH×1 s 得到 2,553,408 words ≈ 20.4 MSa/s、10.22 MB，确认没有 4 倍问题。
-   - 剩余：20CH@160MHz（400 MB/s）和 100 MHz 默认场景待复测。
+   - 剩余：20CH@120MHz（2.4 Gbit/s，新上限）、10/5/2.5 MHz 抽稀、无触发 Loop 待真实硬件实测。
 2. ~~START 前 drain IN 端点~~ **已完成（2026-11-14）**
    - pyusb 实测：配置 ACK 不堆积、STOP+FLUSH 后无旧数据块、START 后首块是 ACK；详见 `docs/PROTOCOL-VLLOGIC-LOGIC20.md`。
    - 已实现 `?vllogic-drain=<ms>`（空闲探测 + 预 arm 交接），**默认 20**：页面实测上一轮 STOP 后端点仍有 ~128 KiB 尾部，不开会在下一轮被当成新数据。
@@ -228,18 +232,37 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 ### P2
 
 - `acceptBatch` 的 target 截断用 `Math.ceil`，`remaining` 非 32 倍数时最多超 31 样本；改为向下对齐或在启动前对齐 `deviceSampleLimit`。
-- 补测试：drop/seq/partial 上报、首块 `capturing=0`、`onEnd` 晚于 `startChannelMajor` 返回、手动 Stop 尾批 flush、coalescer 单批大于 batchSamples、20CH/160MHz 真实批次大小。
+- 补测试：drop/seq/partial 上报、首块 `capturing=0`、`onEnd` 晚于 `startChannelMajor` 返回、手动 Stop 尾批 flush、coalescer 单批大于 batchSamples、20CH/120MHz 真实批次大小、host-loop 的 drop 与窗口同步。
 - `device.recommendedSamplerateHz` 与 `profiles.ts` 的 `recommendedSamplerateHzFor()` 两套推荐值不一致；统一。
 - 评估页 `terminate()` 是 fire-and-forget + 700 ms 等待；改成可等待的 release/close。
 - `vllogicProtocol.ts` 的 CRC 失败重同步目前逐字节左移；可照 `uhsif_rx.c` 的 replay 实现，减少 `crcFail` 噪声。
 - ~~`maskMismatch` 后仍继续消费 payload~~ **已修（2026-11-14）**：整块丢弃，不再混入。
 - 文档/注释里再全局搜一次 “4092-byte”“51 snapshots”“multiple of four”，确保都改成 dwords 语义（`vllogicProtocol.ts` 里的一处已改）。
 - `reportReadStats`/bench 的统计口径继续与 app 实际路径保持一致。
-- `stop()` 的 750 ms settle 仍是上限：无法取消的 `transferIn` 会拖住收尾；若要更快，只能把传输放进 Worker 后 terminate worker。
+- 手动 Stop 仍保留 750 ms settle（停在端点里的读不会完成）；有限采集达到预算和 Loop 的 Stop 已改为立即返回。
 
 ---
 
 ## 9. 近期提交（截至交接）
+
+```
+7e0e47b  docs: record loop support, the worker path and the new scales
+ef21b2a  feat(device): support host-side loop captures on the Logic20
+1f0b52b  fix(ui): render the 5 V CMOS family as 5.0 V
+a92a16a  feat(ui): show 1.6 V as the 3.3 V CMOS preset and right-align notes
+f4c2f46  chore(ui): point the firmware updater at logic20.vllogic.com
+1adf3fc  feat(device): update the Logic20 rates, ceilings and host decimation
+2fff243  feat(ui): warn when the device dropped samples during a capture
+2e75c80  docs: record the worker transport as the final Logic20 path
+4f9fc8f  perf(device): pool the worker batch buffers
+246f5de  perf(device): send one worker batch buffer instead of sixteen
+da8f4d6  feat(device): report the worker capture stats on the page
+73afcac  feat(device): run the Logic20 transport in a worker
+3a1125b  feat(ui): reserve the planar store before a channel-major capture
+9e46767  docs: record the stable 160 MHz capture configuration
+```
+
+更早的提交（交接前的基线）：
 
 ```
 c20a354  fix(device): accept the Logic20 bcdDevice 0x0802
@@ -265,7 +288,8 @@ f141300  feat(device): pipeline VLLogic reads instead of one transfer at a time
 1. 读 `docs/PROTOCOL-VLLOGIC-LOGIC20.md` + `src/device/vllogicProtocol.ts`，确认 `payload_len` 单位和 word/snapshot 定义。
 2. 读 `src/device/vllogic.ts` 的 `readLoop()` 和 `vllogic_usb.c` 的 `in_cb` 对照，理解 depth/补发/顺序。
 3. 跑 `npm test` 和两个设备自检。
-4. 接真实 Logic20，跑一次 `src/device/bench/index.html`，确认 20MHz/160MHz 的时间与有效 MSa/s。
-5. 再决定是否做 TODO 里的 drain、看门狗、Worker。
+4. 接真实 Logic20，跑一次 `src/device/bench/index.html` 和 `drain.html`，确认 20/80/120 MHz 的时间与有效 MSa/s。
+5. 采集走 Worker（`vllogicWorker.ts`）；先用 `?vllogic-worker=0` 跑一次页面路径对照，理解两者的差异。
+6. 再看 P2 的剩余项；drain、看门狗、Worker、host-loop 已完成，不要重复实现。
 
 有硬件相关的疑问，优先对照 `libsigrok/src/hardware/vllogic-logic/`，而不是只看 Web 端注释——之前的 4 倍问题就是注释写错了单位。
