@@ -159,7 +159,7 @@ import {
   carryChannelState,
   DEFAULT_TRIGGER_MODE,
   analogTriggerAutoArms,
-  edgeTriggerAutoArms, clampLoopSamples, DEFAULT_LOOP_SAMPLES, loopDropSamples,
+  edgeTriggerAutoArms, clampLoopSamples, DEFAULT_LOOP_SAMPLES, loopDropSamples, planarBytesPerSample,
   modesToConditions, triggerModeFromCondition, mappedCaptureChannels,
   type AnalogTriggerSetting, type AnalyzerState, type CaptureSettings, type ChannelState,
   type TriggerMode,
@@ -982,6 +982,13 @@ export class App {
       : this.settings.channels;
   }
 
+  /** Real bytes/sample for the selected store (planar pyramid included on the Logic20). */
+  private captureBytesPerSample(channels: number): number {
+    return this.isLaneSelectDevice()
+      ? planarBytesPerSample(channels)
+      : bytesPerSampleForChannels(channels);
+  }
+
   /**
    * Channels referenced by a trigger, bus or decoder. The hard-limit trim closes these
    * last, but still closes them when the unprotected lanes alone cannot fit.
@@ -1089,15 +1096,21 @@ export class App {
       else this.channelSelectedAt.delete(channel.index);
     }
     if (disabled.length > 0) this.dropChannelReferences(disabled);
-    this.ensureMinimumChannel();
+    this.ensureMinimumChannel(start);
     this.enforceChannelBandwidth();
     this.afterChannelChange();
   }
 
-  /** A capture needs at least one lane: keep the lowest available D channel. */
-  private ensureMinimumChannel(): void {
+  /**
+   * A capture needs at least one lane. `preferred` is the row being cleared (D0/D8/D16),
+   * so clearing the only selected row keeps that row's first lane instead of jumping to
+   * D0; a single-chip clear keeps its own row's first lane.
+   */
+  private ensureMinimumChannel(preferred?: number): void {
     if (this.selectedChannelCount() > 0) return;
-    const first = this.channels.find((channel) => channel.index < this.renderChannelCount());
+    const first = preferred !== undefined && preferred < this.renderChannelCount()
+      ? this.channels[preferred]
+      : this.channels.find((channel) => channel.index < this.renderChannelCount());
     if (!first) return;
     first.enabled = true;
     this.markChannelSelected(first.index);
@@ -1220,6 +1233,7 @@ export class App {
     const clamped = clampCaptureSettings(
       s, this.rateCeilings, analogBankActive(this.busViews, s.channels), triggerChannels,
       this.analogGains(), this.memoryChannelCount(),
+      this.captureBytesPerSample(this.memoryChannelCount()),
     );
     // Analog trigger levels belong to a displayed ADC group. Removing the group drops
     // the level (so re-adding it starts off), and its source inputs are not logic
@@ -2290,7 +2304,7 @@ export class App {
     if (s.samplerate !== this.settings.samplerate) this.samplerateExplicit = true;
     // Clamp first (the rate may hit a ceiling), then carry the duration across a mode or
     // rate change at the rate the capture will actually use.
-    const next = carryCaptureDuration(this.settings, this.clampSettings(s), this.memoryChannelCount());
+    const next = carryCaptureDuration(this.settings, this.clampSettings(s), this.memoryChannelCount(), this.captureBytesPerSample(this.memoryChannelCount()));
     if (s.samplerate !== this.settings.samplerate) {
       // The user's own pick: it supersedes the analog memory and the last note.
       this.analogRateMemory = analogRateUserEdit(this.analogRateMemory, next.samplerate);
@@ -2323,9 +2337,11 @@ export class App {
       next.channels === this.settings.channels;
     if (liveLoopWindow) {
       const capture = this.captureStore;
-      const storeChannels = isChannelCount(capture.channelCount)
-        ? capture.channelCount : next.channels;
-      this.loopRetentionLen = clampLoopSamples(next.loopSamples, storeChannels);
+      const storeChannels = capture.storedChannelCount
+        ?? (isChannelCount(capture.channelCount) ? capture.channelCount : next.channels);
+      this.loopRetentionLen = clampLoopSamples(
+        next.loopSamples, storeChannels, this.captureBytesPerSample(storeChannels),
+      );
       // The carried slack is derived from the window; keep the two in step.
       this.loopTriggerSlackSamples = this.analogScanner
         ? triggerSlackSamples(this.loopRetentionLen, capture.samplerate,
@@ -2547,7 +2563,7 @@ export class App {
       this.channelSelectedAt.delete(index);
       if (this.isLaneSelectDevice()) this.dropChannelReferences([index]);
     }
-    this.ensureMinimumChannel();
+    this.ensureMinimumChannel(channelBankStart(index));
     this.enforceChannelBandwidth();
     this.afterChannelChange();
   }
@@ -2582,7 +2598,7 @@ export class App {
     };
     const before = analogRateBeforeClamp(this.analogRateMemory, transition);
     const next = carryCaptureDuration(this.settings,
-      this.clampSettings({ ...this.settings, samplerate: before.rate }), this.memoryChannelCount());
+      this.clampSettings({ ...this.settings, samplerate: before.rate }), this.memoryChannelCount(), this.captureBytesPerSample(this.memoryChannelCount()));
     const after = analogRateAfterClamp(before.memory, {
       ...transition, rateAfter: next.samplerate, restoring: before.restoring,
     });
@@ -5184,7 +5200,7 @@ export class App {
       // A request the ceiling cut runs into the memory ceiling: the panel shows it and the
       // time left at this rate, refreshed on the 500 ms panel clock.
       memory: !loop && this.captureMemoryBound
-        ? captureMemoryReadout(captured.length, capturedChannels, captured.samplerate)
+        ? captureMemoryReadout(captured.length, capturedChannels, captured.samplerate, this.captureBytesPerSample(capturedChannels))
         : null,
     };
   }
@@ -5261,6 +5277,8 @@ export class App {
       selectedChannelCount: this.selectedChannelCount(),
       bandwidthNotice: this.isLaneSelectDevice() ? this.bandwidthNotice : null,
       linkLimitMbps: this.isLaneSelectDevice() ? VLLOGIC_LINK_MBPS : undefined,
+      memoryBytesPerSample: this.isLaneSelectDevice()
+        ? planarBytesPerSample(this.selectedChannelCount()) : undefined,
       buses: this.busViews,
       analogLevelClamped: this.analogLevelClamped,
       rateChange: this.rateChange,
@@ -5664,7 +5682,7 @@ export class App {
    */
   private applyCaptureMemoryCeiling(isLoop: boolean, channels: number): void {
     if (isLoop) { this.captureMemoryBound = false; return; }
-    const budget = captureStoreBudget(this.captureLimitSamples, channels);
+    const budget = captureStoreBudget(this.captureLimitSamples, channels, this.captureBytesPerSample(channels));
     this.captureLimitSamples = budget.samples;
     this.captureMemoryBound = budget.memoryBound;
   }
@@ -6322,7 +6340,7 @@ export class App {
     const adopted = this.clampSettings({
       ...this.settings, channels: width, samplerate, thresholdVolts,
     });
-    this.settings = carryCaptureDuration(this.settings, adopted, this.memoryChannelCount());
+    this.settings = carryCaptureDuration(this.settings, adopted, this.memoryChannelCount(), this.captureBytesPerSample(this.memoryChannelCount()));
     this.busViews = this.busViews.filter((bus) => !busOutOfWidth(bus.spec, this.displayChannelCount()));
     if (device.sampleLayout === 'channel-major' && !this.loadedCapture()) {
       this.resetChannelSelectionTimes();
@@ -6464,7 +6482,7 @@ export class App {
       this.triggerViewFraction = captureLocksTriggerView(mode, softwareTrigger)
         ? triggerViewFraction(this.settings.preTriggerPercent) : 0;
       this.captureStart = softwareTrigger ? 0 : performance.now();
-      const postTriggerSamples = capturePostTriggerSamples(this.settings, activeChannels);
+      const postTriggerSamples = capturePostTriggerSamples(this.settings, activeChannels, this.captureBytesPerSample(activeChannels));
       this.captureLimitSamples = isLoop ? MAX_SAMPLES - 1 : postTriggerSamples;
       this.applyCaptureMemoryCeiling(isLoop, activeChannels);
       this.captureRequestedSeconds = isLoop ? null : postTriggerSamples / cfg.samplerate;
@@ -6523,7 +6541,7 @@ export class App {
 
       const bytesPerSample = bytesPerSampleForChannels(activeChannels);
       this.loopRetentionLen = isLoop
-        ? clampLoopSamples(this.settings.loopSamples, activeChannels)
+        ? clampLoopSamples(this.settings.loopSamples, activeChannels, this.captureBytesPerSample(activeChannels))
         : 0;
       // A locked loop analog trigger advances its window on later crossings. Detection
       // runs on the page's raw chunks (strided, so its cost follows the rate, not the
@@ -8159,6 +8177,7 @@ function clampCaptureSettings(
   analog = false, triggerChannels: number = s.channels,
   analogGains: Readonly<Record<number, number>> = {},
   memoryChannels: number = s.channels,
+  memoryBytesPerSample?: number,
 ): CaptureSettings {
   const ceiling = ceilings[s.channels] ?? 200e6;
   let samplerate = Math.min(s.samplerate, ceiling);
@@ -8181,7 +8200,7 @@ function clampCaptureSettings(
   for (const c of triggerConditions) {
     triggerModes[c.channel] = triggerModeFromCondition(c);
   }
-  const loopSamples = clampLoopSamples(s.loopSamples ?? DEFAULT_LOOP_SAMPLES, memoryChannels);
+  const loopSamples = clampLoopSamples(s.loopSamples ?? DEFAULT_LOOP_SAMPLES, memoryChannels, memoryBytesPerSample);
   const analogTriggers: Record<number, AnalogTriggerSetting> = {};
   for (const [key, value] of Object.entries(s.analogTriggers ?? {})) {
     const start = Number(key);
@@ -8203,7 +8222,7 @@ function clampCaptureSettings(
     // or changing the rate carries the same value (see carryCaptureDuration). The loop
     // window may be shorter than Single's 1 ms minimum, so it is not clamped here.
     seconds: s.mode === 'loop'
-      ? loopDurationSeconds([s.seconds], loopSamples, samplerate, memoryChannels)
+      ? loopDurationSeconds([s.seconds], loopSamples, samplerate, memoryChannels, memoryBytesPerSample)
       : clampCaptureSeconds(s.seconds, samplerate),
     repeatIntervalSeconds: clampRepeatIntervalSeconds(s.repeatIntervalSeconds),
     loopSamples,

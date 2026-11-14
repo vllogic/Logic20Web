@@ -81,7 +81,7 @@ const zh = fs.readFileSync('src/ui/locales/zh-CN.ts', 'utf8');
     apply.includes('next.loopSamples !== this.settings.loopSamples &&') &&
     apply.includes('next.samplerate === this.settings.samplerate &&') &&
     apply.includes('next.channels === this.settings.channels;') &&
-    apply.includes('this.loopRetentionLen = clampLoopSamples(next.loopSamples, storeChannels);') &&
+    apply.includes('this.loopRetentionLen = clampLoopSamples(\n        next.loopSamples, storeChannels, this.captureBytesPerSample(storeChannels),\n      );') &&
     apply.includes('this.enforceLoopRetention(capture);') &&
     !apply.includes('this.enforceLoopRetention(this.storeRef)');
   const start = app.includes('const cfg: CaptureConfig = {') &&

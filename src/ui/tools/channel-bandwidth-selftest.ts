@@ -12,6 +12,7 @@ import {
   aboveLinkLimit, exceedsHardLimit, formatChannelList, maxChannelsForBandwidth,
   selectionBandwidthMbps, trimChannelSelection, type ChannelSelection,
 } from '../channelBandwidth.js';
+import { maxCaptureSamples, planarBytesPerSample } from '../state.js';
 
 interface Result { name: string; pass: boolean; detail: string }
 const results: Result[] = [];
@@ -126,6 +127,22 @@ check(
   formatChannelList([7, 6, 5]),
 );
 
+{
+  // 80 MS/s, sparse planar store: 20 lanes hit the 2 GiB budget first; 8 lanes fit more
+  // samples than the packed 1-byte estimate but fewer than the 2^31 sample ceiling.
+  const at = (channels: number): number => maxCaptureSamples(channels, planarBytesPerSample(channels)) / 80e6;
+  const twenty = at(20);
+  const eight = at(8);
+  const one = at(1);
+  check(
+    'the capture ceiling follows the selected lanes and the planar pyramid',
+    twenty > 9 && twenty < 10 && eight > 23 && eight < 24 && one > 26 && one < 27 &&
+      planarBytesPerSample(8) > 1 && planarBytesPerSample(20) < 3,
+    `20ch=${twenty.toFixed(2)}s 8ch=${eight.toFixed(2)}s 1ch=${one.toFixed(2)}s ` +
+      `B8=${planarBytesPerSample(8).toFixed(3)} B20=${planarBytesPerSample(20).toFixed(3)}`,
+  );
+}
+
 // ---- wiring: the app selects lanes, the panel renders the row button/notices -----
 {
   interface FsLike { readFileSync(path: string, encoding: string): string }
@@ -156,8 +173,10 @@ check(
     (app.match(/this\.enforceChannelBandwidth\(\);/g) ?? []).length >= 4 &&
     app.includes('private dropChannelReferences(closed: readonly number[]): void') &&
     app.includes('private setChannelBankSelected(start: number, select: boolean): void') &&
-    app.includes('private ensureMinimumChannel(): void') &&
-    (app.match(/this\.ensureMinimumChannel\(\);/g) ?? []).length >= 3 &&
+    app.includes('private ensureMinimumChannel(preferred?: number): void') &&
+    app.includes('this.ensureMinimumChannel(start)') &&
+    app.includes('this.ensureMinimumChannel(channelBankStart(index))') &&
+    (app.match(/this\.ensureMinimumChannel\(/g) ?? []).length >= 3 &&
     !app.includes('never zero rows') &&
     app.includes('private channels: ChannelState[] = defaultChannels(20);') &&
     app.includes("return this.device === null || this.device.sampleLayout === 'channel-major';") &&
@@ -166,14 +185,17 @@ check(
     app.includes('VLLOGIC_THRESHOLD_PRESETS') &&
     app.includes('triggerSupported: this.device !== null && this.device.sampleLayout') &&
     app.includes('thresholdDac: this.device === null') &&
-    app.includes('if (this.isLaneSelectDevice()) return [];');
+    app.includes('if (this.isLaneSelectDevice()) return [];') &&
+    app.includes('memoryBytesPerSample: this.isLaneSelectDevice()') &&
+    panel.includes('memoryBytesPerSample !== undefined') &&
+    panel.includes('maxCaptureSamples(memoryChannels, v.memoryBytesPerSample)');
   check(
     'the app streams the selected lanes, trims them and clears stale references',
     wired,
     `selection=${app.includes('selectedChannels: this.selectedChannels()')} ` +
       `sparse=${app.includes('store.setActiveChannels?.(cfg.selectedChannels)')} ` +
       `trim=${(app.match(/this\.enforceChannelBandwidth\(\);/g) ?? []).length} ` +
-      `minimum=${app.includes('private ensureMinimumChannel(): void')} ` +
+      `minimum=${app.includes('private ensureMinimumChannel(preferred?: number): void')} ` +
       `defaultLanes=${app.includes('defaultChannels(20)')} ` +
       `widthHidden=${app.includes('if (this.isLaneSelectDevice()) return [];')}`,
   );

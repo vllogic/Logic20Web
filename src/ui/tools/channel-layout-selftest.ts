@@ -831,10 +831,10 @@ expectHeight('annotation lanes cannot push a channel below the minimum', 200, 32
     startSrc.length > 0 && flagReset >= 0 && firstRefusal > flagReset && flagSet > firstRefusal,
     `slice=${startSrc.length}, reset=${flagReset}, refusal=${firstRefusal}, set=${flagSet}`);
 
-  const directMode = panel.includes('capturePostTriggerSamples(s, memoryChannels)') && !panel.includes('s.channels === 32') &&
+  const directMode = panel.includes('capturePostTriggerSamples(s, memoryChannels, v.memoryBytesPerSample)') && !panel.includes('s.channels === 32') &&
     startSrc.includes('const mode = this.settings.mode;') &&
     startSrc.includes("const isLoop = mode === 'loop'") &&
-    startSrc.includes('const postTriggerSamples = capturePostTriggerSamples(this.settings, activeChannels)') &&
+    startSrc.includes('const postTriggerSamples = capturePostTriggerSamples(this.settings, activeChannels, this.captureBytesPerSample(activeChannels))') &&
     startSrc.includes('this.captureLimitSamples = isLoop ? MAX_SAMPLES - 1 : postTriggerSamples;') &&
     startSrc.includes('this.captureRequestedSeconds = isLoop ? null : postTriggerSamples / cfg.samplerate;') &&
     !appSrc.includes('singleUnlimited') &&
@@ -867,7 +867,7 @@ expectHeight('annotation lanes cannot push a channel below the minimum', 200, 32
     `retained=${appSrc.includes('bytesPerSampleForChannels(capturedChannels)')}`);
   check('the panel, trigger budget and real start path share stored mode without scope ownership',
     directMode,
-    `panel=${panel.includes('capturePostTriggerSamples(s, memoryChannels)')}, ` +
+    `panel=${panel.includes('capturePostTriggerSamples(s, memoryChannels, v.memoryBytesPerSample)')}, ` +
     `start=${startSrc.includes('const mode = this.settings.mode;')}, ` +
     `scopeTransform=${appSrc.includes('effectiveCaptureMode')}`);
 

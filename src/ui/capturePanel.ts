@@ -43,7 +43,7 @@ import { selectControl, type SelectOptionTuple } from './select.js';
 import type { BusViewState } from './busView.js';
 import type { CaptureSettings, ChannelState } from './state.js';
 import {
-  clampLoopSamples, defaultChannelName, LOOP_WINDOW_QUANTUM, maxLoopSamples,
+  clampLoopSamples, defaultChannelName, LOOP_WINDOW_QUANTUM, maxCaptureSamples, maxLoopSamples,
   THRESHOLD_VOLT_OPTIONS,
 } from './state.js';
 import {
@@ -148,6 +148,8 @@ export interface CapturePanelView {
   } | null;
   /** Logic20 USB/host advisory ceiling, Mbit/s. */
   linkLimitMbps?: number | undefined;
+  /** Actual bytes/sample for the selected sparse store (pyramid included). */
+  memoryBytesPerSample?: number | undefined;
   buses: readonly BusViewState[];
   /**
    * The last gain change moved a group's stored trigger level to the new range's edge
@@ -1088,7 +1090,9 @@ export class CapturePanel {
       progress.dataset.indeterminate = 'false';
     }
 
-    const maxSeconds = maxCaptureSeconds(s.samplerate);
+    const maxSeconds = v.memoryBytesPerSample !== undefined
+      ? maxCaptureSamples(memoryChannels, v.memoryBytesPerSample) / s.samplerate
+      : maxCaptureSeconds(s.samplerate);
     if (s.mode === 'single' || s.mode === 'repeat') {
       const duration = acquisitionTimeControl({
         key: 'capture.duration',
@@ -1117,7 +1121,7 @@ export class CapturePanel {
         modeSec.body.appendChild(interval.el);
       }
     } else {
-      const maxSamples = maxLoopSamples(memoryChannels);
+      const maxSamples = maxLoopSamples(memoryChannels, v.memoryBytesPerSample);
       const minSeconds = LOOP_WINDOW_QUANTUM / s.samplerate;
       const maxWindowSeconds = maxSamples / s.samplerate;
       const windowControl = acquisitionTimeControl({
@@ -1125,12 +1129,12 @@ export class CapturePanel {
         // Loop is a rolling single capture; its window is the capture's duration, and the
         // panel calls it that in every mode (HSync's acquisition menu does the same).
         label: t('capturePanel.duration'),
-        seconds: clampLoopSamples(s.loopSamples, memoryChannels) / s.samplerate,
+        seconds: clampLoopSamples(s.loopSamples, memoryChannels, v.memoryBytesPerSample) / s.samplerate,
         minSeconds,
         maxSeconds: maxWindowSeconds,
         disabled: timeLocked,
         onValue: (seconds) => {
-          const samples = clampLoopSamples(Math.round(seconds * s.samplerate), memoryChannels);
+          const samples = clampLoopSamples(Math.round(seconds * s.samplerate), memoryChannels, v.memoryBytesPerSample);
           this.cb.onSettings({ ...s, loopSamples: samples });
         },
       });
@@ -1139,8 +1143,8 @@ export class CapturePanel {
     const limit = div('panel-note');
     if (s.mode === 'loop') {
       limit.textContent = t('capturePanel.loopWindowLimit', {
-        samples: clampLoopSamples(s.loopSamples, memoryChannels).toLocaleString(),
-        duration: formatDuration(clampLoopSamples(s.loopSamples, memoryChannels) / s.samplerate),
+        samples: clampLoopSamples(s.loopSamples, memoryChannels, v.memoryBytesPerSample).toLocaleString(),
+        duration: formatDuration(clampLoopSamples(s.loopSamples, memoryChannels, v.memoryBytesPerSample) / s.samplerate),
         rate: formatRate(s.samplerate),
       });
     } else {
@@ -1395,7 +1399,7 @@ export class CapturePanel {
         // mode), capped by the 64 MiB retained prefix. Promising the raw percentage
         // would overstate it exactly when the cap bites (e.g. 50% of 1 s at
         // 16ch/200M is capped at ~167 ms).
-        const post = capturePostTriggerSamples(s, memoryChannels);
+        const post = capturePostTriggerSamples(s, memoryChannels, v.memoryBytesPerSample);
         // A running matcher's retained prefix was sized at start; Duration edits cannot
         // grow or shrink it, so the armed note must not claim the new setting's window.
         const requestedPre = Math.floor(post * s.preTriggerPercent / 100);

@@ -9,8 +9,9 @@ import {
 
 export function capturePostTriggerSamples(
   settings: CaptureSettings, channels: number = settings.channels,
+  bytesPerSample?: number,
 ): number {
-  if (settings.mode === 'loop') return clampLoopSamples(settings.loopSamples, channels);
+  if (settings.mode === 'loop') return clampLoopSamples(settings.loopSamples, channels, bytesPerSample);
   const seconds = clampCaptureSeconds(settings.seconds, settings.samplerate);
   return Math.min(MAX_SAMPLES - 1, Math.max(1, Math.round(seconds * settings.samplerate)));
 }
@@ -29,6 +30,7 @@ export function capturePostTriggerSamples(
  */
 export function carryCaptureDuration(
   previous: CaptureSettings, next: CaptureSettings, channels: number = next.channels,
+  bytesPerSample?: number,
 ): CaptureSettings {
   if (next.mode === 'loop') {
     let loopSamples = next.loopSamples;
@@ -36,27 +38,27 @@ export function carryCaptureDuration(
       // A caller that changed the window explicitly keeps it; a bare mode switch carries
       // the duration the other modes were using.
       if (next.loopSamples === previous.loopSamples) {
-        loopSamples = clampLoopSamples(Math.round(previous.seconds * next.samplerate), channels);
+        loopSamples = clampLoopSamples(Math.round(previous.seconds * next.samplerate), channels, bytesPerSample);
       }
     } else if (next.samplerate !== previous.samplerate && next.loopSamples === previous.loopSamples) {
       loopSamples = clampLoopSamples(
-        Math.round(previous.loopSamples / previous.samplerate * next.samplerate), channels);
+        Math.round(previous.loopSamples / previous.samplerate * next.samplerate), channels, bytesPerSample);
     }
-    loopSamples = clampLoopSamples(loopSamples, channels);
+    loopSamples = clampLoopSamples(loopSamples, channels, bytesPerSample);
     return {
       ...next,
       loopSamples,
       // The window may be shorter than Single's 1 ms control minimum; this field carries
       // the duration across a switch, and the clamp happens when leaving Loop.
       seconds: loopDurationSeconds(
-        [next.seconds, previous.seconds], loopSamples, next.samplerate, channels),
+        [next.seconds, previous.seconds], loopSamples, next.samplerate, channels, bytesPerSample),
     };
   }
   if (previous.mode === 'loop') {
     return {
       ...next,
       seconds: clampCaptureSeconds(loopDurationSeconds(
-        [previous.seconds], previous.loopSamples, previous.samplerate, channels,
+        [previous.seconds], previous.loopSamples, previous.samplerate, channels, bytesPerSample,
       ), next.samplerate),
     };
   }
@@ -73,11 +75,11 @@ export function carryCaptureDuration(
  */
 export function loopDurationSeconds(
   candidates: readonly number[], loopSamples: number, samplerate: number,
-  channels: number,
+  channels: number, bytesPerSample?: number,
 ): number {
   for (const seconds of candidates) {
     if (Number.isFinite(seconds) && seconds > 0 &&
-        clampLoopSamples(Math.round(seconds * samplerate), channels) === loopSamples) {
+        clampLoopSamples(Math.round(seconds * samplerate), channels, bytesPerSample) === loopSamples) {
       return seconds;
     }
   }
@@ -91,9 +93,9 @@ export function loopDurationSeconds(
  * it is a typed 'memory' abort rather than "Completed".
  */
 export function captureStoreBudget(
-  requestedSamples: number, channels: number,
+  requestedSamples: number, channels: number, bytesPerSample?: number,
 ): { samples: number; memoryBound: boolean } {
-  const cap = maxCaptureSamples(channels);
+  const cap = maxCaptureSamples(channels, bytesPerSample);
   return requestedSamples > cap
     ? { samples: cap, memoryBound: true }
     : { samples: requestedSamples, memoryBound: false };
@@ -110,13 +112,13 @@ export interface CaptureMemoryReadout {
 
 /** The ceiling readout for a cut request: the ceiling, and "about x s left" at the rate. */
 export function captureMemoryReadout(
-  keptSamples: number, channels: number, samplerate: number,
+  keptSamples: number, channels: number, samplerate: number, bytesPerSample?: number,
 ): CaptureMemoryReadout {
-  const capSamples = maxCaptureSamples(channels);
+  const capSamples = maxCaptureSamples(channels, bytesPerSample);
   const left = Math.max(0, capSamples - Math.max(0, keptSamples));
   return {
     capSamples,
-    capBytes: capSamples * bytesPerSampleForChannels(channels),
+    capBytes: capSamples * (bytesPerSample ?? bytesPerSampleForChannels(channels)),
     remainingSeconds: samplerate > 0 ? left / samplerate : 0,
     warn: left <= capSamples * CAPTURE_MEMORY_WARN_FRACTION,
   };

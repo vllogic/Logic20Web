@@ -145,12 +145,26 @@ export const LOOP_WINDOW_QUANTUM = 1024;
 /** 1 s at the default 16 MHz; already a multiple of the quantum. */
 export const DEFAULT_LOOP_SAMPLES = 16_000_000;
 
-export function maxLoopSamples(channels: number): number {
+export function maxLoopSamples(
+  channels: number, bytesPerSample: number = bytesPerSampleForChannels(channels),
+): number {
   const q = LOOP_WINDOW_QUANTUM;
+  const perSample = bytesPerSample > 0 ? bytesPerSample : bytesPerSampleForChannels(channels);
   return Math.floor(Math.min(
-    LOOP_RETENTION_MAX_BYTES / bytesPerSampleForChannels(channels),
+    LOOP_RETENTION_MAX_BYTES / perSample,
     LOOP_RETENTION_MAX_SAMPLES,
   ) / q) * q;
+}
+
+/**
+ * Bytes per sample in a sparse PlanarSampleStore, whose pyramid adds 2/15 bit per
+ * sample per captured channel (PlanarStore header: 2 * (1/16 + 1/256 + ...) = 2/15).
+ * `bytesPerSampleForChannels()` packs the enabled lanes into whole bytes and ignores
+ * the pyramid; at 8 lanes that under-counts the real allocation by ~12%, so the budget
+ * must use this figure for the Logic20's planar capture.
+ */
+export function planarBytesPerSample(channels: number): number {
+  return Math.max(0, channels) * 17 / 120;
 }
 
 /**
@@ -162,17 +176,22 @@ export function maxLoopSamples(channels: number): number {
  */
 export const CAPTURE_MEMORY_MAX_BYTES = LOOP_RETENTION_MAX_BYTES;
 
-export function maxCaptureSamples(channels: number): number {
+export function maxCaptureSamples(
+  channels: number, bytesPerSample: number = bytesPerSampleForChannels(channels),
+): number {
+  const perSample = bytesPerSample > 0 ? bytesPerSample : bytesPerSampleForChannels(channels);
   return Math.min(2 ** 31 - 1,
-    Math.floor(CAPTURE_MEMORY_MAX_BYTES / bytesPerSampleForChannels(channels)));
+    Math.floor(CAPTURE_MEMORY_MAX_BYTES / perSample));
 }
 
 /** Within this fraction of the ceiling the panel's remaining-time readout turns warning. */
 export const CAPTURE_MEMORY_WARN_FRACTION = 0.1;
 
-export function clampLoopSamples(samples: number, channels: number): number {
+export function clampLoopSamples(
+  samples: number, channels: number, bytesPerSample?: number,
+): number {
   const q = LOOP_WINDOW_QUANTUM;
-  const max = maxLoopSamples(channels);
+  const max = maxLoopSamples(channels, bytesPerSample);
   if (Number.isNaN(samples)) return Math.min(DEFAULT_LOOP_SAMPLES, max);
   if (samples === Number.POSITIVE_INFINITY) return max;
   if (!Number.isFinite(samples)) return q;
