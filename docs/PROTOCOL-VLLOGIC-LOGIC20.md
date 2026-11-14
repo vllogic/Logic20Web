@@ -93,6 +93,44 @@ transport calls `beginFrame()`, writes each word with `appendChannel()`, and
 publishes the snapshot with `commitSamples(32)`. A query between channel writes
 still sees the previous complete frame.
 
+## Starting a capture and the IN endpoint
+
+Measured 2026-11-14 with `src/device/tools/vllogic_drain_probe.py` (pyusb, firmware
+bcdDevice `0x0820`, 20 MHz x 4 CH) because WebUSB cannot reproduce the native
+`sync_drain()`:
+
+- Commands acknowledge with a 16-byte block (`payload_len = 0`). If the host does not
+  read IN while configuring, the ACKs do not accumulate without bound: after START the
+  capture sees roughly 9 of them, and the parser skips every one.
+- `STOP` + `FLUSH` stop the stream. With the host deliberately stalled for 1.5 s
+  (device FIFO overflow, `drop` latched), the endpoint still held no stale data blocks
+  after the next `STOP`; only the final ACK arrived. A capture therefore never starts
+  with a previous capture's payload.
+- At high bandwidth a *stopped* capture still has a tail in flight. 16 lanes at
+  160 MHz with a host that cannot keep up (single-threaded pyusb) left 8 data blocks
+  (~128 KiB, `capturing = 1`) to read after STOP. That is the current capture's tail,
+  not a stale one: the WebUSB read loop keeps consuming it during the 750 ms settle
+  window, and `captureEpoch` keeps an older loop from writing into a newer capture.
+- The first block after START is the START ACK, not data. The transport's first-block
+  check waits for the first *data* block (`lastHeader` is only updated by payload
+  blocks), so an ACK cannot trip `device.headerMismatch`.
+
+WebUSB has no cancellable `transferIn`, so two things replace the native drain:
+
+- `stop()` resolves the read loop's completion wait directly (`wakeLoop`); a board that
+  stops sending cannot park the loop for the rest of the page session. Outstanding
+  reads still get the 750 ms settle window, because they cannot be cancelled.
+- An optional pre-START drain (`?vllogic-drain=<ms>`, default `0` off) races one
+  `transferIn` against an idle window. Data completing inside the window is stale and
+  discarded; the read that outlives it becomes the capture's sequence-0 read, so no
+  reader is left behind. It is off by default because the measurement above found
+  nothing to drain.
+
+A capture with no data block within 1000 ms of START fails with `device.noData`
+(`?vllogic-firstblock=<ms>` overrides it, 20..60000). This is the wedged-board state:
+commands are acknowledged, the bulk endpoint stays silent, and the page would
+otherwise show "Capturing" forever.
+
 ## Rates and channel ceilings
 
 The ISERDES clock is 2.4 GHz. The browser table is:

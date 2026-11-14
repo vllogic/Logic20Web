@@ -61,11 +61,13 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
    - 保持 `depth` 条 `transferIn` 同时在飞（默认 8，单次请求 256 KiB；设备实际每 16 KiB 完成一次短读，所以真实缓冲是 `depth × 16 KiB`）。
    - 完成回调**先补发**下一条读，再交给消费者；按提交序号严格排序消费。
    - 达到 `deviceSampleLimit` 立即 `onEnd`，不等被 Stop 的读队列排空。
-   - 首块校验：`div / mask / mode / capturing` 与配置不符直接报 `device.headerMismatch`。
+   - 首块校验：`div / mask / mode / capturing` 与配置不符直接报 `device.headerMismatch`（ACK 不参与）。
+   - 首块看门狗：START 后 1 s 内没有 data block 报 `device.noData`；`stop()` 会唤醒停在等待里的循环。
+   - 可选 START 前排空：`?vllogic-drain=<ms>`（默认 0）；空闲窗口内完成的数据丢弃，窗口后挂起的读作为采集的第 0 条读（预 arm）。
    - 设备身份：接受 bcdDevice `0x0802` 或 `0x0820`，拒绝 Sniffer2 的 `0x0602`。
    - `drop_flag` 边沿通过 dropout sink 上报；`seq` 跳变、`partialSnapshots` 写入 parser stats。
    - 每次采集有 `captureEpoch`，旧 readLoop 不会污染新采集。
-4. `vllogicProtocol.ts` parser：CRC 失败重同步、跨块半 word/半 snapshot 保留、按 payload 批量回调。
+4. `vllogicProtocol.ts` parser：CRC 失败重同步、跨块半 word/半 snapshot 保留、按 payload 批量回调；mask 不符的 payload 整块丢弃。
 5. `planarStore`：把每通道 words 直接写进位平面，并更新 pyramid。
 6. `channelMajorCoalescer`：把 per-payload 的 commit 合并到 **120 Hz**（8.33 ms，样本数按 32 对齐），采集结束/手动 Stop 时 flush 尾批。
 7. UI：`liveDrawDue` 按上一帧成本节流绘制；显示层本来就是 ~120 Hz 更新。
@@ -73,6 +75,10 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 ### 已修的关键 bug（不要再退回去）
 
 - **`payload_len` 单位**：曾是 `4092` 被当字节、每 word 减 4，导致每块只消费 1023/4092 words，**采样率只有标称的 1/4**（20 MHz → 4.9 MSa/s，160 MHz → 40 MSa/s，1 s 数据要 4 s）。修复为 dwords，并加了 4092-word / 204-snapshot 自检。
+- **stop 不唤醒读循环**：`readLoop` 停在 `await new Promise(...)` 等完成回调，`stop()` 只置 `running=false`，设备不再出数时循环永不醒来（`stop()` 靠 750 ms race 假装返回）。现在 `stop()` 调 `wakeLoop`，`loopCompleted` 可观测；旧代循环仍由 `captureEpoch` 隔离。
+- **首块无看门狗**：START 后设备被卡住（命令都 ACK、bulk 不出数）时 UI 会一直 Capturing。现在 1 s 内没有 data block 就报 `device.noData`（`?vllogic-firstblock=<ms>` 可调，20..60000）。
+- **首块校验误报**：`acceptBatch` 只对 data block 的 header 做校验；START 的 ACK 不更新 `lastHeader`，不会触发 `device.headerMismatch`。
+- **mask 不符仍消费 payload**：parser 现在整块丢弃 mask 与配置不符的 payload（`discardPayload`），避免旧 lane 顺序混进采集；`maskMismatch` 仍计数。
 - **coalescer 尾批**：`startChannelMajor()` 在 START 完成后就返回；曾在这里把 coalescer 引用置空，导致 `onEnd`/手动 Stop 无法 flush 最后一批。现在 coalescer 保持到 `finishCapture`，`onEnd` 和 `finishCapture` 都 flush。
 - **升级提示卡**：不再永久占用右上角；显示 3 秒自动收起，升级图标保持 ready。
 - **bcdDevice**：真实 Logic20 在 Windows 显示 `REV_0820`，Chrome 的 `deviceVersionMajor/Minor` 组合出来是 `0x0802`；两种都接受。
@@ -98,7 +104,8 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **`payload_len` 是 dwords**，不是字节。见 `uhsif_rx.c:767/841/928-933`、`uhsif.v`。
 - 设备每 16 KiB 完成一次读；请求 256 KiB 不会真的攒满 256 KiB。`depth × 16 KiB` 才是实际在飞窗口。
 - Chrome 的 bcdDevice 拆分与 Windows 显示不一致，不要只按 `0x0820` 拒绝。
-- WebUSB 的 `transferIn` 无法取消：START 前 drain 端点要非常小心，当前未做（见 TODO）。
+- WebUSB 的 `transferIn` 无法取消：默认不排空，靠 STOP+FLUSH 和首块校验；可选排空见 `?vllogic-drain`。
+- 高带宽（16CH@160MHz）主机落后时，STOP 后设备仍会完成已排队的尾部数据（实测约 128 KiB，`capturing=1`）。这是**本次采集的尾巴**，不是旧数据；readLoop 会在 750 ms settle 内消费，`captureEpoch` 防止旧循环越代写入。
 - 设备 `drop_flag` 不会在数据里插标记；丢样后时间轴会压缩，必须靠 drop/seq 统计告警。
 
 ---
@@ -134,6 +141,27 @@ npm run dev
 - 修复 `payload_len` 后，20 MHz×4CH×1s 应约 1 s、`bytes`≈10 MB、`effMSa`≈20；16CH@160MHz×0.25s 应约 0.25 s、`bytes`≈80 MB、`effMSa`≈160。
 - 注意：headless Chromium 里的 WebUSB/页面导航不可靠，必须用真实浏览器。
 
+### START 前排空验证页（2026-11 新增）
+
+```bash
+npm run dev:lan   # HTTPS，局域网访问 https://<lan-ip>:5174/src/device/bench/drain.html
+```
+
+- 可调采样率/通道/drain 空闲窗口/depth/read KiB/轮数；每轮记录排空读、preArm、首块延迟、ACK/CRC/mask/drop/seq 统计和 stop 耗时。
+- `drain=0` 是生产现状；`drain=20` 打开“探测空闲 + 预 arm 交接”（`?vllogic-drain=<ms>`）。
+- 连续多轮同时验证 stop 唤醒：卡住的循环会表现为 stop≈750 ms 且后续轮次异常。
+
+### pyusb 协议复现（无需浏览器）
+
+```bash
+python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
+  --rate 20000000 --channels 4 --duration-ms 200 --json /tmp/drain-web.json
+```
+
+- `--mode web|drain|c-driver` 分别模拟浏览器现状、空闲探测、libsigrok 的逐条 ACK + `sync_drain(32×5ms)`。
+- `--stall-ms 1500` 模拟页面卡住（设备 FIFO 溢出、drop latch），用来看 STOP 后是否留下旧数据块。
+- 结论（2026-11-14，固件 `0x0820`）：配置 ACK 不会无限堆积；STOP+FLUSH 后没有旧数据块；START 后首块是 ACK。因此 drain 默认关闭。
+
 ---
 
 ## 6. 升级 / PWA 机制
@@ -167,12 +195,13 @@ npm run dev
 
 1. **用真实硬件复测修复后的采集**
    - 20 MHz×4CH×1s、16CH@160MHz×0.25s 是否回到标称时长/样本率；
-   - 20CH@160MHz（400 MB/s）下 depth 曲线，确认 `depth×16 KiB` 是否足够；必要时把默认 depth 提到 16/32。
-2. **START 前 drain IN 端点**（P1-3）
-   - WebUSB 无法取消 `transferIn`，直接 drain 有风险；可考虑 Worker 内做、或等待 FLUSH ACK、或用首块 `seq`/`capturing` 规则丢弃残留。当前依赖 FLUSH + 首块校验。
-3. **stop 唤醒 readLoop + 首字节/首块超时**
-   - `stop()` 现在最多等 750 ms；等待 `wake` 的循环不会被立即唤醒；
-   - 设备 Start 后不出数时 UI 会一直显示 Capturing，需要 1 s 级看门狗。
+   - 20CH@160MHz（400 MB/s）下 depth 曲线，确认 `depth×16 KiB` 是否足够；必要时把默认 depth 提到 16/32；
+   - 用 `src/device/bench/drain.html` 跑 4 轮 `drain=0`，确认每轮 stop 都远小于 750 ms、无 maskMismatch/CRC 失败。
+2. ~~START 前 drain IN 端点~~ **已完成（2026-11-14）**
+   - pyusb 实测：配置 ACK 不堆积、STOP+FLUSH 后无旧数据块、START 后首块是 ACK；详见 `docs/PROTOCOL-VLLOGIC-LOGIC20.md`。
+   - 已实现可选 `?vllogic-drain=<ms>`（空闲探测 + 预 arm 交接），默认关闭；页面可对比。
+3. ~~stop 唤醒 readLoop + 首块超时~~ **已完成（2026-11-14）**
+   - `stop()` 调 `wakeLoop`，`loopCompleted` 可观测；`device.noData` 看门狗 1 s（`?vllogic-firstblock=<ms>`）。
 4. **Worker 迁移评估**
    - 当前页面线程处理约占 7–10%（16CH@160MHz），并发+depth 已够；
    - 只有在重 UI 负载下仍掉速，或 20CH 满速需要更大缓冲时，再上 Worker（复用 `usbWorker`/`workerTransport`）。
@@ -184,9 +213,10 @@ npm run dev
 - `device.recommendedSamplerateHz` 与 `profiles.ts` 的 `recommendedSamplerateHzFor()` 两套推荐值不一致；统一。
 - 评估页 `terminate()` 是 fire-and-forget + 700 ms 等待；改成可等待的 release/close。
 - `vllogicProtocol.ts` 的 CRC 失败重同步目前逐字节左移；可照 `uhsif_rx.c` 的 replay 实现，减少 `crcFail` 噪声。
-- `maskMismatch` 后仍继续消费 payload；考虑直接丢弃到下一个头。
-- 文档/注释里再全局搜一次 “4092-byte”“51 snapshots”“multiple of four”，确保都改成 dwords 语义。
+- ~~`maskMismatch` 后仍继续消费 payload~~ **已修（2026-11-14）**：整块丢弃，不再混入。
+- 文档/注释里再全局搜一次 “4092-byte”“51 snapshots”“multiple of four”，确保都改成 dwords 语义（`vllogicProtocol.ts` 里的一处已改）。
 - `reportReadStats`/bench 的统计口径继续与 app 实际路径保持一致。
+- `stop()` 的 750 ms settle 仍是上限：无法取消的 `transferIn` 会拖住收尾；若要更快，只能把传输放进 Worker 后 terminate worker。
 
 ---
 
