@@ -69,14 +69,14 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 2. UHSIF 块：16 B 头 + `payload_len` 个 **32-bit 字**（不是字节！范围 120..4092），总线上一块 16 KiB。
 2b. 生产路径在 Dedicated Worker 里跑读泵 + parser；每 8.33 ms 一批（16CH@160MHz 约 2.66 MB）transfer 给页面，buffer 池 8 个 + ack 回传复用。`?vllogic-worker=0` 回退页面线程。Worker 的 batch 缓冲按选中 lane 数分配。
 3. `vllogic.ts`：
-   - 保持 `depth` 条 `transferIn` 同时在飞（默认 64，单次请求 256 KiB；Chromium/Linux 实测每次完成约 230–256 KiB，64 条约 16 MiB 请求窗口；Linux 需要 `usbfs_memory_mb >= 16`。16 KiB 是 UHSIF 块粒度，不是完成长度）。
+   - 保持 `depth` 条 `transferIn` 同时在飞（默认 64，单次请求 256 KiB；Chromium/Linux 实测每次完成约 230–256 KiB，64 条约 16 MiB 请求窗口。**Linux 要把 `usbfs_memory_mb` 提到 64**：默认 16 时 64 × 256 KiB 正好顶满预算，`transferIn` 会报 “A transfer error has occurred”；也可用 `?vllogic-depth=32` 临时降到 8 MiB。16 KiB 是 UHSIF 块粒度，不是完成长度）。
    - 完成回调**先补发**下一条读，再交给消费者；按提交序号严格排序消费。
    - 达到 `deviceSampleLimit` 立即 `onEnd`，不等被 Stop 的读队列排空。
    - 首块校验：`div / mask / mode / capturing` 与配置不符直接报 `device.headerMismatch`（ACK 不参与）。
    - 首块看门狗：START 后 1 s 内没有 data block 报 `device.noData`；`stop()` 会唤醒停在等待里的循环。
    - `stop()` 对“已交付 sample budget”的有限采集立即返回（STOP 后的 pending 读不会完成，等满 750 ms 没有意义）；手动 Stop 仍保留 750 ms settle 收集尾部。
    - START 前排空：`?vllogic-drain=<ms>`（默认 20）；空闲窗口内完成的数据丢弃，窗口后挂起的读作为采集的第 0 条读（预 arm）。实测能把上一轮 STOP 后残留的 ~128 KiB 尾部清掉。
-   - 设备身份：固件 bcdDevice 只有 8.20；安卓 Chrome 与桌面 Chrome 对低 BCD 字节的解码不同，`vllogicBcdMatchesHost()` 按宿主分别匹配，拒绝 Sniffer2 的 `0x0602`。
+   - 设备身份：用产品字符串 `Logic20` 匹配（大小写不敏感、去空白），不再看 bcdDevice；Sniffer2 共享 PID 但产品名不同，仍会被拒绝。
    - `drop_flag` 边沿通过 dropout sink 上报；`seq` 跳变、`partialSnapshots` 写入 parser stats。
    - Loop：设备无限流，app 在每次 120 Hz commit 后按 `loopRetentionLen` 丢弃前端（大块、512 对齐），`ChannelMajorCoalescer` 用 `store.length` 作为每帧起点；手动 Stop 不等 750 ms。
    - 抽稀：10/5/2.5 MHz 设备仍按 20 MHz 流，`VllogicDecimator` 在 host 端每 2/4/8 个样本取一个，跨批保留余数，提交仍是 32 对齐。有限采集的 `deviceSampleLimit` 在 START 时向下对齐到 32；尾批按 `decimateFactor` 把“剩余输出快照”换算成输入快照，避免抽稀时为了凑数跳过成块输入、破坏尾部连续性。
@@ -105,7 +105,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **target 用 `Math.ceil` 截断**：整快照提交不可能精确命中任意样本数，`Math.ceil` 会超预算最多 31 样本。现在 START 时向下对齐到 32，抽稀尾批再按 `decimateFactor` 换算；不要改回向上取整或按输出快照数截输入。
 - **coalescer 尾批**：`startChannelMajor()` 在 START 完成后就返回；曾在这里把 coalescer 引用置空，导致 `onEnd`/手动 Stop 无法 flush 最后一批。现在 coalescer 保持到 `finishCapture`，`onEnd` 和 `finishCapture` 都 flush。
 - **升级提示卡**：不再永久占用右上角；显示 3 秒自动收起，升级图标保持 ready。
-- **bcdDevice**：固件只有 8.20（Windows 显示 `REV_0820`），但桌面 Chrome 与安卓 Chrome 对低 BCD 字节的解码不同；这是宿主差异，不是设备有三种版本。现在按宿主匹配（`vllogicBcdMatchesHost()`），不要再写死单一组合，也不要把整个 `0x08xx` 都放行。
+- **bcdDevice 不再参与身份判断**：固件是 8.20，但桌面 Chrome 解码成 8.2.x、安卓 Chrome 解码成 8.1.x（安卓还会带 subminor，如 8.1.4），按 UA 或按值匹配都不可靠。现在只用产品字符串 `Logic20`（trim + 忽略大小写）识别；Sniffer2 共享 PID，但产品名不同。
 
 ---
 
@@ -114,7 +114,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 项 | 值 |
 |---|---|
 | VID / PID | `0x1209` / `0x6688` |
-| bcdDevice | 固件 8.20；桌面 Chrome 与安卓 Chrome 解码不同，按宿主匹配（`vllogicBcdMatchesHost()`）；Sniffer2 `0x0602` 拒绝 |
+| bcdDevice | 固件 8.20，但各宿主解码不同（桌面 8.2.x / 安卓 8.1.x）；**身份判断不用它**，用产品字符串 `Logic20` |
 | 端点 | OUT `0x01`，IN `0x81`（WebUSB 传端点号 1） |
 | 时钟 | 2.4 GHz / div |
 | 速率表 | 1200/600/300/150/120/80/40/20 MHz（div 2/4/8/16/20/30/60/120）+ 10/5/2.5 MHz（div 120，上位机 2/4/8 抽一） |
@@ -135,7 +135,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 
 - **`payload_len` 是 dwords**，不是字节。见 `uhsif_rx.c:767/841/928-933`、`uhsif.v`。
 - 原生 libsigrok 的 URB 以 16 KiB 短包完成；但 Chromium/Linux 的 WebUSB `transferIn(256 KiB)` 实测每次完成约 230–256 KiB（278 次读 ~64 MB），所以 `depth × 256 KiB` 才是请求窗口，`depth` 提供的是主机侧缓冲时间（32 × 256 KiB ≈ 25 ms @ 320 MB/s）。
-- Chrome 的 bcdDevice 解码与 Windows 原生不同，安卓 Chrome 又与桌面 Chrome 不同；按宿主匹配，不要写死一个值。
+- bcdDevice 在各宿主上解码不一致，不要用它识别设备；产品字符串 `Logic20` 才是稳定标识。
 - WebUSB 的 `transferIn` 无法取消：用空闲探测 + 预 arm 排空（`?vllogic-drain`，默认 20 ms）；只靠 STOP+FLUSH 不够，停止时仍有尾部在飞。
 - 高带宽（16CH@160MHz）主机落后时，STOP 后设备仍会完成已排队的尾部数据（实测约 128 KiB，`capturing=1`）。这是**本次采集的尾巴**，不是旧数据；readLoop 会在 750 ms settle 内消费，`captureEpoch` 防止旧循环越代写入。
 - 设备 `drop_flag` 不会在数据里插标记；丢样后时间轴会压缩，必须靠 drop/seq 统计告警。
@@ -239,7 +239,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
    - 0.5 s × 20 轮压测仍有 20%–30% 轮次中段 drop；`longtask` 全 0（阈值 50 ms），但 rAF 帧间隔显示 drop 轮 `frameMax≈33 ms`、`frameSlow(>20 ms)` 为 7–16，非 drop 轮 0–4。**主线程 20–33 ms 停顿是根因**。
    - `PlanarSampleStore.reserveSamples()` 可在 START 前预分配 base/pyramid（base 每通道每块 2 MiB，采集期间增长会触发 GC）；测试页已默认勾选“预分配 store”。
    - 预分配实测把 0.5 s × 20 轮的 drop 从 6/20 降到 2/20；剩余停顿与“每轮新建 160 MB store、由 GC 在下一轮回收”相关。`PlanarSampleStore.reset()` 保留块数组只清 bookkeeping，测试页在同一几何下复用 store（不再每轮新建）。
-   - **最终配置**：depth **64**（64 × 256 KiB ≈ 16 MiB 请求窗口，Linux 需 `usbfs_memory_mb >= 16`）+ 预分配 + 复用 store，0.5 s × 20 轮 **0/20 drop**；慢帧仍有（`frameMax` 最大 49.8 ms、`frameSlow` 0–15），但被缓冲吸收；`runMs` 500–582 ms（停顿会拉长采集时间，不丢样）。
+   - **最终配置**：depth **64**（64 × 256 KiB ≈ 16 MiB 请求窗口，Linux 需把 `usbfs_memory_mb` 提到 64；默认 16 会顶满预算并让 `transferIn` 报 transfer error）+ 预分配 + 复用 store，0.5 s × 20 轮 **0/20 drop**；慢帧仍有（`frameMax` 最大 49.8 ms、`frameSlow` 0–15），但被缓冲吸收；`runMs` 500–582 ms（停顿会拉长采集时间，不丢样）。
    - 收尾 drain（`TAIL_DRAIN_MS=20`）仍保留，专门防“预算达成后停止读”造成的尾部溢出。
    - pyusb 侧 20 MHz×4CH×1 s 得到 2,553,408 words ≈ 20.4 MSa/s、10.22 MB，确认没有 4 倍问题。
    - 剩余：任意 lane 子集/新带宽规则（见下一条）、10/5/2.5 MHz 抽稀、无触发 Loop 待真实硬件实测。旧的 20CH@120MHz 档位不再是上限。

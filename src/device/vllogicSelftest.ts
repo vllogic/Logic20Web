@@ -16,10 +16,7 @@ import {
   VLLOGIC_EP_IN_ADDR,
   VLLOGIC_EP_OUT_ADDR,
   VLLOGIC_NUM_CHANNELS,
-  VLLOGIC_BCD_MAJOR,
   VllogicParser,
-  vllogicAndroidHost,
-  vllogicBcdMatchesHost,
   vllogicBuildCommand,
   vllogicBuildLut,
   vllogicCrc16,
@@ -68,11 +65,11 @@ function block(
 
 class FakeUsb {
   opened = true;
-  readonly productName = 'Logic20';
+  productName = 'Logic20';
   readonly serialNumber = 'selftest';
   deviceVersionMajor = 8;
   deviceVersionMinor = 0x02;
-  readonly deviceVersionSubminor = 0;
+  deviceVersionSubminor = 0;
   readonly chunks: Uint8Array[] = [];
   /** Blocks the pre-START drain may see; empty means the endpoint is idle. */
   readonly beforeStartChunks: Uint8Array[] = [];
@@ -985,27 +982,40 @@ async function main(): Promise<void> {
   }
 
   {
-    const androidUa = 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
-    const desktopUa = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    const fake = new FakeUsb();
+    fake.deviceVersionMajor = 8;
+    fake.deviceVersionMinor = 1;
+    fake.deviceVersionSubminor = 4;
+    const device = await VllogicDevice.open(fake as unknown as USBDevice);
     check(
-      'the bcdDevice check follows the host decoder instead of one BCD value',
-      vllogicAndroidHost(androidUa) && !vllogicAndroidHost(desktopUa) &&
-        vllogicBcdMatchesHost(VLLOGIC_BCD_MAJOR, 1, true) &&
-        vllogicBcdMatchesHost(VLLOGIC_BCD_MAJOR, 2, false) &&
-        !vllogicBcdMatchesHost(VLLOGIC_BCD_MAJOR, 2, true) &&
-        !vllogicBcdMatchesHost(VLLOGIC_BCD_MAJOR, 1, false) &&
-        !vllogicBcdMatchesHost(0x06, 2, false),
-      `android=${vllogicBcdMatchesHost(8, 1, true)} desktop=${vllogicBcdMatchesHost(8, 2, false)} ` +
-        `swapped=${vllogicBcdMatchesHost(8, 2, true)}/${vllogicBcdMatchesHost(8, 1, false)}`,
+      'an Android Chrome 8.1.4 board opens through its Logic20 product string',
+      device.name === 'Logic20',
+      `name=${device.name}`,
     );
   }
 
   {
     const fake = new FakeUsb();
-    fake.deviceVersionMajor = 0x06;
-    fake.deviceVersionMinor = 0x02;
+    fake.productName = '  logic20  ';
+    let opened = false;
+    try {
+      await VllogicDevice.open(fake as unknown as USBDevice);
+      opened = true;
+    } catch {
+      opened = false;
+    }
+    check(
+      'the product string is matched after trimming and ignoring case',
+      opened,
+      `opened=${opened}`,
+    );
+  }
+
+  {
+    const fake = new FakeUsb();
+    fake.deviceVersionMajor = 8;
+    fake.deviceVersionMinor = 2;
+    fake.productName = 'USB Sniffer 2';
     let code = '';
     try {
       await VllogicDevice.open(fake as unknown as USBDevice);
@@ -1013,7 +1023,25 @@ async function main(): Promise<void> {
       code = (e as { code?: string }).code ?? '';
     }
     check(
-      'a Sniffer2 bcdDevice is rejected before claiming',
+      'a different product string is rejected even with a Logic20-like version',
+      code === 'device.unexpectedDevice',
+      `code=${code}`,
+    );
+  }
+
+  {
+    const fake = new FakeUsb();
+    fake.deviceVersionMajor = 0x06;
+    fake.deviceVersionMinor = 0x02;
+    fake.productName = 'USB Sniffer 2';
+    let code = '';
+    try {
+      await VllogicDevice.open(fake as unknown as USBDevice);
+    } catch (e) {
+      code = (e as { code?: string }).code ?? '';
+    }
+    check(
+      'a Sniffer2 product string is rejected before claiming',
       code === 'device.unexpectedDevice',
       `code=${code}`,
     );

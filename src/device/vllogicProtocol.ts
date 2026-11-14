@@ -26,31 +26,14 @@
 import { VLLOGIC_FIFO_HARD_MBPS, maxChannelsForBandwidth } from './vllogicBandwidth.js';
 
 /**
- * USB identity. Logic20 firmware reports bcdDevice 8.20 once, but WebUSB hosts
- * decode the low BCD byte differently: desktop Chrome exposes major 8 / minor 2,
- * while Chrome on Android exposes major 8 / minor 1. That is a host decoding
- * quirk, not three device identities, so match the expected value for the host.
+ * USB identity. The product string descriptor is the stable identity: Logic20
+ * firmware reports "Logic20" everywhere, while bcdDevice is decoded differently
+ * by each host (desktop Chrome 8.2.x, Android 8.1.x). The older Sniffer2 shares
+ * the PID but uses a different product string.
  */
 export const VLLOGIC_VID = 0x1209;
 export const VLLOGIC_PID = 0x6688;
-/** Logic20 firmware major version (bcdDevice 8.20). */
-export const VLLOGIC_BCD_MAJOR = 8;
 export const VLLOGIC_PRODUCT = 'Logic20';
-
-/** Chrome on Android decodes bcdDevice's low BCD byte as 1 instead of 2. */
-export function vllogicAndroidHost(userAgent: string): boolean {
-  return /Android/i.test(userAgent);
-}
-
-/** The minor field each host produces for the same 8.20 firmware. */
-export function vllogicBcdMinorForHost(android: boolean): number {
-  return android ? 1 : 2;
-}
-
-/** True when the WebUSB version fields match this host's Logic20 decoding. */
-export function vllogicBcdMatchesHost(major: number, minor: number, android: boolean): boolean {
-  return major === VLLOGIC_BCD_MAJOR && minor === vllogicBcdMinorForHost(android);
-}
 export const VLLOGIC_IFACE = 0;
 /** Descriptor endpoint addresses (include the direction bit). */
 export const VLLOGIC_EP_OUT_ADDR = 0x01;

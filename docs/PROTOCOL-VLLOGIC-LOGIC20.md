@@ -13,7 +13,7 @@ records the facts the browser implementation depends on.
 | --- | --- |
 | VID:PID | `0x1209:0x6688` |
 | Product string | `Logic20` |
-| bcdDevice | firmware 8.20 (Windows `REV_0820`); Chrome on Android decodes the low BCD byte differently from desktop Chrome, so the identity check matches per host (`vllogicBcdMatchesHost()`) instead of one value; the older `0x0602` Sniffer2 is not compatible |
+| bcdDevice | firmware 8.20, but each host decodes it differently (desktop 8.2.x, Android 8.1.x); **identity does not use it** - the product string `Logic20` is matched instead |
 | Interface | 0 (vendor-specific, class `0xFF`); interface 1 is DLDO and must not be claimed |
 | Bulk OUT | endpoint number 1 (address `0x01`) |
 | Bulk IN | endpoint number 1 (address `0x81`) |
