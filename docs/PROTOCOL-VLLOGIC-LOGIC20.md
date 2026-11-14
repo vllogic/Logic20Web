@@ -166,19 +166,34 @@ The slow three keep the device at 20 MHz and drop every second/fourth/eighth
 sample on the host (the native driver's PC decimation factor), because the
 ISERDES divider bottoms out at 120.
 
-The FPGA silently drops snapshots above its channel/rate envelope, so the
-profile refuses these combinations (2.4 Gbit/s in every row):
+The FPGA silently drops snapshots above its channel/rate envelope. The browser
+treats the internal FIFO as a *total* lane-bit budget instead of a per-width
+table: any subset of the 20 lanes may run at any offered rate, and the capture is
+refused above 4500 Mbit/s (the hardware envelope is 4800 Mbit/s). The USB 3 /
+host scheduler has a separate, measured advisory ceiling of 2560 Mbit/s; above
+it the page warns but still captures.
 
-| Output rate | Maximum lanes |
+| Output rate | Lanes under the 4500 Mbit/s hard limit |
 | --- | --- |
-| 1200 MHz | 2 |
-| 600 MHz | 4 |
-| 300 MHz | 8 |
-| 150 MHz | 16 |
-| <= 120 MHz | 20 |
+| 1200 MHz | 3 |
+| 600 MHz | 7 |
+| 300 MHz | 15 |
+| 150 MHz or less | 20 |
 
-The default 20-lane recommendation is 80 MHz (200 MB/s); 120 MHz is the
-20-lane ceiling.
+The 20-lane default recommendation remains 80 MHz (1600 Mbit/s), comfortably
+below the USB advisory ceiling. A selection above 4500 Mbit/s is trimmed in the
+page by closing the oldest selected lanes first; equal selection times close the
+higher logical channel first. Channels referenced by a trigger, bus or decoder
+are closed last, but still closed when nothing else fits.
+
+## Channel selection
+
+`CHANNEL_MASK` accepts any subset of the 20 physical lanes. The LUT ring is built
+over the selected lanes, and the payload still carries one word per selected
+lane in ascending physical order, so the parser maps each word back to its
+original logical D number. The UI keeps the fixed D0–D7 / D8–D15 / D16–D19
+rows; selecting a lane adds it to the capture, clearing it removes it. The store
+allocates only the selected lanes' planes.
 
 ## Comparator threshold
 

@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-14，对应 `main` 的 `87f8ef6`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步）。
+最后更新：2026-11-14，对应 `main` 的 `5f32e0a`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
 
 ---
 
@@ -60,9 +60,13 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 
 ## 3. Logic20 数据通路（当前实现）
 
-1. 设备：20 lane，每 lane 每 word 32 samples；一个 snapshot = `nchan` words = 32 个采样时刻。
+1. 设备：20 lane，每 lane 每 word 32 samples；一个 snapshot = `nchan` words = 32 个采样时刻。`nchan` 是本次**选中**的 lane 数，不要求连续，也不要求是 2 的幂。
+   - UI 固定三行 D0–D7 / D8–D15 / D16–D19；每行右侧“全选/全不选”，不再有 2CH/4CH/… 和 A0 模拟按钮（A0 只保留给 32U3）。
+   - 选中顺序记时间戳；`selected × samplerate > 4500 Mbps` 时按“未引用优先、最早选定优先、同时间通道号大优先”强制关闭，至少保留 1 路；被关闭通道的触发/总线/解码器引用会被清理并提示。
+   - 4500 Mbps 是硬限制；>2560 Mbps 只显示“可能超出 USB 链路带宽（WebUSB综合限制）”。
+   - 存储按选中通道稀疏分配（`PlanarSampleStore.setActiveChannels`），未选通道不分配平面，内存不再按 20 路膨胀。
 2. UHSIF 块：16 B 头 + `payload_len` 个 **32-bit 字**（不是字节！范围 120..4092），总线上一块 16 KiB。
-2b. 生产路径在 Dedicated Worker 里跑读泵 + parser；每 8.33 ms 一批（16CH@160MHz 约 2.66 MB）transfer 给页面，buffer 池 8 个 + ack 回传复用。`?vllogic-worker=0` 回退页面线程。
+2b. 生产路径在 Dedicated Worker 里跑读泵 + parser；每 8.33 ms 一批（16CH@160MHz 约 2.66 MB）transfer 给页面，buffer 池 8 个 + ack 回传复用。`?vllogic-worker=0` 回退页面线程。Worker 的 batch 缓冲按选中 lane 数分配。
 3. `vllogic.ts`：
    - 保持 `depth` 条 `transferIn` 同时在飞（默认 64，单次请求 256 KiB；Chromium/Linux 实测每次完成约 230–256 KiB，64 条约 16 MiB 请求窗口；Linux 需要 `usbfs_memory_mb >= 16`。16 KiB 是 UHSIF 块粒度，不是完成长度）。
    - 完成回调**先补发**下一条读，再交给消费者；按提交序号严格排序消费。
@@ -89,6 +93,9 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **首块无看门狗**：START 后设备被卡住（命令都 ACK、bulk 不出数）时 UI 会一直 Capturing。现在 1 s 内没有 data block 就报 `device.noData`（`?vllogic-firstblock=<ms>` 可调，20..60000）。
 - **首块校验误报**：`acceptBatch` 只对 data block 的 header 做校验；START 的 ACK 不更新 `lastHeader`，不会触发 `device.headerMismatch`。
 - **mask 不符仍消费 payload**：parser 现在整块丢弃 mask 与配置不符的 payload（`discardPayload`），避免旧 lane 顺序混进采集；`maskMismatch` 仍计数。
+- **旧的 2.4 Gbit/s 通道档位作废**：不要再按 `vllogicMaxChannels()` 的 2/4/8/16/20 档（那是旧的每行 2.4Gbit 规则）限制 UI。现行规则是任意 lane 子集 + 4500 Mbps 总带宽硬限制；`vllogicMaxChannels()` 只作为总带宽换算的辅助。
+- **通道芯片不再只是显示开关**：Logic20 上 `enabled` 决定本次采集的 lane 子集，`CaptureConfig.selectedChannels` 交给 transport；未选 lane 在 store 中没有平面。不要改回“采集前 N 路、芯片只隐藏行”。
+- **内存不能按 20 路固定分配**：`PlanarSampleStore` 的稀疏活跃集合是硬要求；未选通道不能 `extendTo()`/建 pyramid，否则选 1 路会膨胀 20 倍。
 - **CRC 重同步逐字节左移**：不要把移位后的 15 B 当新头继续验 CRC（会刷 `crcFail`，还可能吞掉紧随其后的真头）。现在照 `uhsif_rx.c` 把它们回放给 SCAN，一次坏块只记一次；已攒的完整快照必须先 flush，半快照计入 `partialSnapshots`。
 - **target 用 `Math.ceil` 截断**：整快照提交不可能精确命中任意样本数，`Math.ceil` 会超预算最多 31 样本。现在 START 时向下对齐到 32，抽稀尾批再按 `decimateFactor` 换算；不要改回向上取整或按输出快照数截输入。
 - **coalescer 尾批**：`startChannelMajor()` 在 START 完成后就返回；曾在这里把 coalescer 引用置空，导致 `onEnd`/手动 Stop 无法 flush 最后一批。现在 coalescer 保持到 `finishCapture`，`onEnd` 和 `finishCapture` 都 flush。
@@ -106,7 +113,9 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 端点 | OUT `0x01`，IN `0x81`（WebUSB 传端点号 1） |
 | 时钟 | 2.4 GHz / div |
 | 速率表 | 1200/600/300/150/120/80/40/20 MHz（div 2/4/8/16/20/30/60/120）+ 10/5/2.5 MHz（div 120，上位机 2/4/8 抽一） |
-| 通道上限 | 1200:2；600:4；300:8；150:16；≤120:20（每行 2.4 Gbit/s） |
+| 通道选择 | 任意 0..19 子集（CHANNEL_MASK + LUT 环），不限“前 N 路” |
+| 内部 FIFO | 理论 4800 Mbps；上位机硬限制 4500 Mbps（选中数 × 采样率） |
+| USB / 上位机 | 实测约 2560 Mbps；超过只提示，不强制 |
 | 持续带宽上限 | 约 400 MB/s（原生实测） |
 | 接口 | Interface 0；Interface 1 是 DLDO，勿碰 |
 | 触发/Loop | 支持无触发 Loop（host 端保留最新窗口并 `dropFront`）；软件触发仍不支持 |
@@ -133,7 +142,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 cd /home/llp/logic20/Logic20Web
 npm install
 npm run dev        # 浏览器打开 http://localhost:5173/
-npm run test       # 113 个离线套件（无硬件）
+npm run test       # 114 个离线套件（无硬件）
 npm run build      # tsc --noEmit + vite build
 ```
 
@@ -219,13 +228,17 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
    - **最终配置**：depth **64**（64 × 256 KiB ≈ 16 MiB 请求窗口，Linux 需 `usbfs_memory_mb >= 16`）+ 预分配 + 复用 store，0.5 s × 20 轮 **0/20 drop**；慢帧仍有（`frameMax` 最大 49.8 ms、`frameSlow` 0–15），但被缓冲吸收；`runMs` 500–582 ms（停顿会拉长采集时间，不丢样）。
    - 收尾 drain（`TAIL_DRAIN_MS=20`）仍保留，专门防“预算达成后停止读”造成的尾部溢出。
    - pyusb 侧 20 MHz×4CH×1 s 得到 2,553,408 words ≈ 20.4 MSa/s、10.22 MB，确认没有 4 倍问题。
-   - 剩余：20CH@120MHz（2.4 Gbit/s，新上限）、10/5/2.5 MHz 抽稀、无触发 Loop 待真实硬件实测。
+   - 剩余：任意 lane 子集/新带宽规则（见下一条）、10/5/2.5 MHz 抽稀、无触发 Loop 待真实硬件实测。旧的 20CH@120MHz 档位不再是上限。
 2. ~~START 前 drain IN 端点~~ **已完成（2026-11-14）**
    - pyusb 实测：配置 ACK 不堆积、STOP+FLUSH 后无旧数据块、START 后首块是 ACK；详见 `docs/PROTOCOL-VLLOGIC-LOGIC20.md`。
    - 已实现 `?vllogic-drain=<ms>`（空闲探测 + 预 arm 交接），**默认 20**：页面实测上一轮 STOP 后端点仍有 ~128 KiB 尾部，不开会在下一轮被当成新数据。
 3. ~~stop 唤醒 readLoop + 首块超时~~ **已完成（2026-11-14）**
    - `stop()` 调 `wakeLoop`，`loopCompleted` 可观测；`device.noData` 看门狗 1 s（`?vllogic-firstblock=<ms>`）。
-4. ~~Worker 迁移~~ **已实现（2026-11-14）**
+4. **任意 lane 子集的真机验证（待硬件）**
+   - UI 已改成 D0–D19 三行 + 行全选，`CaptureConfig.selectedChannels` 交给 transport；稀疏 store 只分配选中平面。
+   - 真机要覆盖：非连续子集（如 D0/D3/D19）、20 路时分批关闭、4500 硬限制触发、2560 提示、LUT 环与 payload 物理顺序映射。
+   - 关注 `maskMismatch=0`、`drop=0`，以及选中通道的波形是否落在正确 D 编号上。
+5. ~~Worker 迁移~~ **已实现（2026-11-14）**
    - 生产 app 页面线程实测每轮 `drop=1`、avg 53–56 ms；Worker 后 **约 30 轮 0 drop**、296–318 MB/s。
    - `vllogicWorker.ts`：Worker 内读泵 + parser + 120 Hz 聚合；`workerVllogicDevice.ts`：页面包装，主线程只写 store。
    - 每 8.33 ms 一批约 2.66 MB（16CH@160MHz）；**buffer 池 8 个 + 页面 ack 回传**，稳态零分配，避免 Worker GC 与读泵抢事件循环。
@@ -242,12 +255,17 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 - 文档/注释里再全局搜一次 “4092-byte”“51 snapshots”“multiple of four”，确保都改成 dwords 语义（`vllogicProtocol.ts` 里的一处已改；`PROTOCOL-VLLOGIC-LOGIC20.md` 的 “does not have to be a multiple of four” 是正确表述，勿误删）。
 - `reportReadStats`/bench 的统计口径继续与 app 实际路径保持一致（drain 页已用 store 字节算线速，避免把 20 ms 收尾 drain 算进去）。
 - 手动 Stop 仍保留 750 ms settle（停在端点里的读不会完成）；有限采集达到预算和 Loop 的 Stop 已改为立即返回。
+- **TODO：`.lwcap` 紧凑导出**。当前 `.lwcap` 仍按 store.channelCount（20）写，未选通道会以零通道出现在文件里；`.sr`/`.vcd`/`.csv` 已只导出启用通道。后续给 `planLwcap` 加通道映射，或让 store 暴露“已存储通道列表”并压缩头部。
+- **TODO：存储宽度真正压缩**。稀疏平面已消除 20 倍内存膨胀，但 store 的逻辑宽度仍是 20；若要进一步压缩 header/导出/`channelCount` 语义，需要 D 编号↔store 索引映射，工作量大，先不做。
 
 ---
 
 ## 9. 近期提交（截至交接）
 
 ```
+5f32e0a  feat(ui): select Logic20 lanes within the FIFO and link limits
+360177a  feat(device): stream arbitrary Logic20 lane subsets
+9b386f7  feat(data): store only the selected channel-major lanes
 87f8ef6  fix(device): land the Logic20 budget exactly and resync corrupt headers
 a6236cc  docs: refresh the handoff for worker, loop and the new scales
 7e0e47b  docs: record loop support, the worker path and the new scales
@@ -291,9 +309,10 @@ f141300  feat(device): pipeline VLLogic reads instead of one transfer at a time
 
 1. 读 `docs/PROTOCOL-VLLOGIC-LOGIC20.md` + `src/device/vllogicProtocol.ts`，确认 `payload_len` 单位和 word/snapshot 定义。
 2. 读 `src/device/vllogic.ts` 的 `readLoop()` 和 `vllogic_usb.c` 的 `in_cb` 对照，理解 depth/补发/顺序。
-3. 跑 `npm test` 和两个设备自检。
-4. 接真实 Logic20，跑一次 `src/device/bench/index.html` 和 `drain.html`，确认 20/80/120 MHz 的时间与有效 MSa/s。
-5. 采集走 Worker（`vllogicWorker.ts`）；先用 `?vllogic-worker=0` 跑一次页面路径对照，理解两者的差异。
-6. 再看 P2 的剩余项；drain、看门狗、Worker、host-loop、预算对齐、CRC replay 已完成，不要重复实现。
+3. 读 `src/ui/channelBandwidth.ts` + `src/ui/app.ts` 的 `enforceChannelBandwidth()`，理解 4500/2560 与强制关闭顺序；再看 `PlanarSampleStore.setActiveChannels()` 的稀疏存储。
+4. 跑 `npm test` 和两个设备自检。
+5. 接真实 Logic20，跑一次 `src/device/bench/index.html` 和 `drain.html`，确认任意 lane 子集、20/80/120 MHz 的时间与有效 MSa/s。
+6. 采集走 Worker（`vllogicWorker.ts`）；先用 `?vllogic-worker=0` 跑一次页面路径对照，理解两者的差异。
+7. 再看 P2 的剩余项；drain、看门狗、Worker、host-loop、预算对齐、CRC replay、通道选择与稀疏存储已完成，不要重复实现。
 
 有硬件相关的疑问，优先对照 `libsigrok/src/hardware/vllogic-logic/`，而不是只看 Web 端注释——之前的 4 倍问题就是注释写错了单位。
