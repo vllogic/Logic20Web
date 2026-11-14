@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-14，对应 `main` 的 `ccd22f4`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
+最后更新：2026-11-14，对应 `main` 的 `ab0b259`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
 
 ---
 
@@ -97,6 +97,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **默认采样率必须是 80 MS/s**：页面打开/连接 Logic20 后就要选中它（20 lane × 80 MHz = 1600 Mbps，低于 2560 提示线）。旧 workspace 里非 explicit 的 16 MS/s 会被覆盖；显式选择保持，但必须 snap 到 Logic20 的速率表。不要改回只靠 `recommendedSamplerateHz`，否则某些 workspace 会显示 16 或空白。
 - **上一轮 pending transferIn 不能丢**：WebUSB 无法取消读；STOP 后停在端点里的读会一直 park，直到下一次 START 才有字节。若下一轮 new readLoop 直接新建读取，这些“孤儿读”会先吃掉新 START 的 ACK 和/或前几十个 data block，新 parser 的 START barrier 就永远等不到 ACK（日志表现为 `payload=0 preAck=2256` + `device.noData`）。现在 `readLoop` 退出时把未完成的读放进 `carriedReads`，下一次 `startChannelMajor()` 按提交顺序继承给新 readLoop；只有下一轮 START 前已经完成（读到的是旧字节）的读才丢弃。
 - **START 后只靠 pre-START drain 不够**：上一轮 STOP 后的尾部可能仍在端点上，且 mask 相同，parser 会把尾部当新数据。尾部 word 数不是 `nchan` 倍数时，整个采集的 snapshot 相位被旋转（D0 随机跑到 D4/D12）。现在 parser 有 START barrier：收到 ACK 前的所有 data block 丢弃，ACK 后从新流的 snapshot 边界开始。`preAckBlocks` 记录丢弃块数。
+- **稀疏存储的内存预算要用 `selected × 17/120` 字节/样本**，不是 `bytesPerSampleForChannels()` 的整字节打包值。后者在 8 路时算 1 B，实际 base+pyramid 是 1.133 B，会低估 12% 并可能 OOM；20 路时 3 B 又偏保守。`planarBytesPerSample()` 是唯一口径，采集时长/循环窗口/内存读数都用它。
 - **旧的 2.4 Gbit/s 通道档位作废**：不要再按 `vllogicMaxChannels()` 的 2/4/8/16/20 档（那是旧的每行 2.4Gbit 规则）限制 UI。现行规则是任意 lane 子集 + 4500 Mbps 总带宽硬限制；`vllogicMaxChannels()` 只作为总带宽换算的辅助。
 - **通道芯片不再只是显示开关**：Logic20 上 `enabled` 决定本次采集的 lane 子集，`CaptureConfig.selectedChannels` 交给 transport；未选 lane 在 store 中没有平面。不要改回“采集前 N 路、芯片只隐藏行”。
 - **内存不能按 20 路固定分配**：`PlanarSampleStore` 的稀疏活跃集合是硬要求；未选通道不能 `extendTo()`/建 pyramid，否则选 1 路会膨胀 20 倍。
@@ -121,6 +122,8 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 通道选择 | 任意 0..19 子集（CHANNEL_MASK + LUT 环），不限“前 N 路” |
 | 内部 FIFO | 理论 4800 Mbps；上位机硬限制 4500 Mbps（选中数 × 采样率） |
 | USB / 上位机 | 实测约 2560 Mbps；超过只提示，不强制 |
+| 存储预算 | 2 GiB；稀疏 planar 每样本 `selected × 17/120` 字节（含 pyramid 2/15 bit） |
+| 80 MS/s 最大时长 | 20 路约 9.5 s；8 路约 23.7 s；1 路受 2^31 样本上限约 26.8 s |
 | 持续带宽上限 | 约 400 MB/s（原生实测） |
 | 接口 | Interface 0；Interface 1 是 DLDO，勿碰 |
 | 触发/Loop | 支持无触发 Loop（host 端保留最新窗口并 `dropFront`）；软件触发仍不支持 |
@@ -274,6 +277,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 ## 9. 近期提交（截至交接）
 
 ```
+ab0b259  feat(ui): size the capture ceiling by the selected lanes
 ccd22f4  fix(ui): allow clearing a row and open with the Logic20 layout
 d676b52  fix(device): carry parked reads into the next Logic20 capture
 3dc24e9  fix(device): discard pre-ACK tail before a new Logic20 capture

@@ -200,7 +200,11 @@ over the selected lanes, and the payload still carries one word per selected
 lane in ascending physical order, so the parser maps each word back to its
 original logical D number. The UI keeps the fixed D0–D7 / D8–D15 / D16–D19
 rows; selecting a lane adds it to the capture, clearing it removes it. The store
-allocates only the selected lanes' planes.
+allocates only the selected lanes' planes. Its memory per sample is
+`selected * 17/120` bytes: one base bit plus the 2/15-bit pyramid per lane. That
+figure, not packed whole bytes, drives the capture-duration and loop-window
+ceilings: at 80 MS/s, 20 lanes max out near 9.5 s, 8 lanes near 23.7 s, and one
+lane reaches the 2^31-sample ceiling (~26.8 s).
 
 ## Comparator threshold
 
