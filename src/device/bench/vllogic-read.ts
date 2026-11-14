@@ -22,6 +22,7 @@ interface BenchCase {
   depth: number;
   readKiB: number;
   batchMs: number;
+  drainIdleMs: number;
 }
 
 interface BenchResult extends BenchCase {
@@ -226,6 +227,8 @@ async function runCase(bench: BenchCase): Promise<BenchResult> {
   const device = await VllogicDevice.open(usb, {
     depth: bench.depth,
     bytes: bench.readKiB * 1024,
+    firstBlockMs: 1000,
+    drainIdleMs: bench.drainIdleMs,
   });
   const store = new PlanarSampleStore({ channelCount: channels, samplerate: rate });
   const sink = new BenchSink(store, batchSamples);
@@ -295,7 +298,7 @@ runButton.addEventListener('click', async () => {
   const cases: BenchCase[] = [];
   for (const depth of depths) {
     for (const readKiB of reads) {
-      for (const batchMs of batches) cases.push({ depth, readKiB, batchMs });
+      for (const batchMs of batches) cases.push({ depth, readKiB, batchMs, drainIdleMs: 0 });
     }
   }
 

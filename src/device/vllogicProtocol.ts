@@ -351,6 +351,12 @@ export class VllogicParser {
   private batchSnapshots = 0;
   private carry = new Uint8Array(0);
   private dropActive = false;
+  /**
+   * Drop the payload of a block whose header mask is not the configured one. Its words
+   * belong to another lane set (a stale block from before START, or a misconfigured
+   * board), so consuming them would mix a different word order into this capture.
+   */
+  private discardPayload = false;
 
   constructor(
     private readonly map: VllogicChannelMap,
@@ -420,9 +426,10 @@ export class VllogicParser {
         return;
       }
       if ((data[off]! | (data[off + 1]! << 8)) !== UHSIF_BLK_MAGIC16) {
-        // The device pads each 4092-byte payload to a 16 KiB transfer, so most
-        // scan bytes are zero. Jump to the next 0xC6 (the magic's low byte) with
-        // the native indexOf instead of walking the padding one byte at a time.
+        // A block is one 16 KiB transfer (16 B header + up to 4092 words), and a
+        // short block leaves zero padding, so most scan bytes are zero. Jump to
+        // the next 0xC6 (the magic's low byte) with the native indexOf instead of
+        // walking the padding one byte at a time.
         const next = data.indexOf(0xC6, off + 1);
         if (next < 0 || next + 3 >= data.length) {
           const keep = Math.max(off, next >= 0 ? next : data.length - 3);
@@ -451,9 +458,13 @@ export class VllogicParser {
     this.payRem = 0;
     this.state = 0;
     this.carry = new Uint8Array(0);
+    this.discardPayload = false;
   }
 
   private acceptWord(word: number): void {
+    // A mismatched block's words are consumed from the wire either way, but they must
+    // not reach the batch: the lane order they carry is not this capture's.
+    if (this.discardPayload) return;
     this.stats.payloadWords++;
     this.batch[this.batchWords++] = word;
     if (this.batchWords % this.map.nchan === 0) {
@@ -527,7 +538,8 @@ export class VllogicParser {
       seq,
       payloadWords: plen,
     };
-    if ((w1 & 0xFFFFF) !== this.map.mask) {
+    this.discardPayload = (w1 & 0xFFFFF) !== this.map.mask;
+    if (this.discardPayload) {
       this.stats.maskMismatch++;
       this.batchWords = 0;
       this.batchSnapshots = 0;

@@ -68,9 +68,15 @@ class FakeUsb {
   deviceVersionMinor = 0x02;
   readonly deviceVersionSubminor = 0;
   readonly chunks: Uint8Array[] = [];
+  /** Blocks the pre-START drain may see; empty means the endpoint is idle. */
+  readonly beforeStartChunks: Uint8Array[] = [];
   readonly commands: Array<{ cmd: number; param: number }> = [];
   delayMs = 0;
   varyDelay = false;
+  /** Let a pre-START transferIn consume `beforeStartChunks` instead of waiting for START. */
+  serveBeforeStart = false;
+  /** Model a wedged board: transferIn never completes once the queued chunks run out. */
+  hangWhenEmpty = false;
   calls = 0;
   maxConcurrent = 0;
   private active = 0;
@@ -92,9 +98,18 @@ class FakeUsb {
   }
 
   async transferIn(_endpoint: number, _length: number): Promise<USBInTransferResult> {
-    // Submission order is the endpoint's FIFO order, so bind the block before waiting
-    // for START; the *completion* may still arrive out of order.
     const call = this.calls++;
+    // A pre-START drain read returns queued leftovers immediately; once they run out
+    // the read parks and the transport's idle window turns it into the pre-arm.
+    if (!this.started && this.serveBeforeStart && this.beforeStartChunks.length > 0) {
+      const stale = this.beforeStartChunks.shift()!;
+      return {
+        status: 'ok',
+        data: new DataView(stale.buffer, stale.byteOffset, stale.byteLength),
+      };
+    }
+    // Bind the block at submission time: that is the endpoint's FIFO order, even
+    // though the *completion* may still arrive out of order.
     const chunk = this.chunks.shift();
     while (!this.started) await new Promise((resolve) => setTimeout(resolve, 2));
     this.active += 1;
@@ -102,6 +117,9 @@ class FakeUsb {
     try {
       const wait = this.varyDelay ? (call % 3) * 3 : this.delayMs;
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      if (!chunk && this.hangWhenEmpty) {
+        return new Promise<USBInTransferResult>(() => { /* wedged: never completes */ });
+      }
       if (!chunk) return { status: 'ok', data: new DataView(new ArrayBuffer(0)) };
       return {
         status: 'ok',
@@ -227,6 +245,32 @@ async function main(): Promise<void> {
     `snapshots=${received.length}/${snapshots} acks=${parser.stats.acks} crcFail=${parser.stats.crcFail}`,
   );
 
+  // A stale block from another lane set must not be mixed into this capture, even
+  // though its words are consumed from the wire.
+  {
+    // Both payloads clear the 120-word firmware minimum; the stale one is 121 words
+    // (6 snapshots + 1 dangling), so it also exercises the partial-snapshot carry.
+    const stalePayload = Array.from({ length: 121 }, (_, i) => (0xAAAA0000 | i) >>> 0);
+    const goodPayload = Array.from({ length: 120 }, (_, i) => (0x55550000 | i) >>> 0);
+    let delivered = 0;
+    const seen: number[] = [];
+    const mixed = new VllogicParser(map, (words, batchSnapshots) => {
+      delivered += batchSnapshots;
+      seen.push(...Array.from(words.subarray(0, batchSnapshots * map.nchan)));
+    });
+    mixed.feed(block(0xF, 15, 1, stalePayload));
+    mixed.feed(block(0xFFFFF, 15, 2, goodPayload));
+    mixed.finish();
+    check(
+      'a block with the wrong mask is dropped instead of mixed in',
+      delivered === 6 && seen.length === 120 &&
+        seen.every((word, i) => word === goodPayload[i]) &&
+        mixed.stats.maskMismatch === 1 && mixed.stats.payloadWords === 120,
+      `delivered=${delivered} seen=${seen.length} maskMismatch=${mixed.stats.maskMismatch} ` +
+        `payloadWords=${mixed.stats.payloadWords}`,
+    );
+  }
+
   // A 121-word payload is 6 whole 20-lane snapshots plus 1 dangling word: end of
   // stream publishes the 6 and drops the partial.
   let delivered = 0;
@@ -302,16 +346,63 @@ async function main(): Promise<void> {
     );
   }
 
+  // ---- optional pre-START drain ------------------------------------------
+  {
+    const fake = new FakeUsb();
+    fake.serveBeforeStart = true;
+    // A stale block from a previous capture (wrong mask) that the drain must discard.
+    const stalePayload = Array.from({ length: 121 }, (_, i) => (0xAAAA0000 | i) >>> 0);
+    const goodPayload = Array.from({ length: 120 }, (_, i) => (0x55550000 | i) >>> 0);
+    const stale = block(0xF, 60, 1, stalePayload);
+    fake.beforeStartChunks.push(stale);
+    // 120 words at 20 lanes is 6 snapshots; it is what the pre-armed read delivers.
+    fake.chunks.push(block(0xFFFFF, 120, 2, goodPayload));
+    const device = await VllogicDevice.open(fake as unknown as USBDevice, {
+      bytes: 8192, depth: 2, firstBlockMs: 1000, drainIdleMs: 5,
+    });
+    const store = new PlanarSampleStore({ channelCount: 20, samplerate: 20e6 });
+    let ended = false;
+    let error: unknown = null;
+    device.onError = (e) => { error = e; };
+    await device.startChannelMajor(
+      { channels: 20, samplerate: 20e6, thresholdVolts: 1.65 },
+      {
+        begin: (channels) => store.beginFrame(channels),
+        channel: (channel, start, words) => store.appendChannel(channel, start, words),
+        commit: (samples) => store.commitSamples(samples),
+      },
+      undefined,
+      { deviceSampleLimit: 6 * 32, onEnd: () => { ended = true; } },
+    );
+    for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+    await device.stop();
+    check(
+      'the pre-START drain discards stale blocks and hands its pending read to the capture',
+      ended && error === null && store.length === 6 * 32 &&
+        device.drainStats.reads === 1 && device.drainStats.bytes === stale.length &&
+        device.drainStats.preArmed,
+      `ended=${ended} code=${(error as { code?: string } | null)?.code ?? 'none'} ` +
+        `length=${store.length} drain=${JSON.stringify(device.drainStats)}`,
+    );
+  }
+
   // ---- pipelined reads ---------------------------------------------------
   {
-    const overridden = vllogicReadTuning('?vllogic-read=131072&vllogic-depth=4');
-    const rejected = vllogicReadTuning('?vllogic-read=1&vllogic-depth=999');
+    const overridden = vllogicReadTuning(
+      '?vllogic-read=131072&vllogic-depth=4&vllogic-firstblock=250&vllogic-drain=20',
+    );
+    const rejected = vllogicReadTuning(
+      '?vllogic-read=1&vllogic-depth=999&vllogic-firstblock=1&vllogic-drain=9999',
+    );
     const defaults = vllogicReadTuning('');
     check(
       'read tuning honours safe overrides, rejects unsafe values and defaults to 256 KiB x 8',
-      overridden.bytes === 131072 && overridden.depth === 4 &&
+      overridden.bytes === 131072 && overridden.depth === 4 && overridden.firstBlockMs === 250 &&
+        overridden.drainIdleMs === 20 &&
         rejected.bytes === 256 * 1024 && rejected.depth === 8 &&
-        defaults.bytes === 256 * 1024 && defaults.depth === 8,
+        rejected.firstBlockMs === 1000 && rejected.drainIdleMs === 0 &&
+        defaults.bytes === 256 * 1024 && defaults.depth === 8 &&
+        defaults.firstBlockMs === 1000 && defaults.drainIdleMs === 0,
       `override=${JSON.stringify(overridden)} rejected=${JSON.stringify(rejected)} ` +
         `defaults=${JSON.stringify(defaults)}`,
     );
@@ -368,11 +459,72 @@ async function main(): Promise<void> {
 
   {
     const fake = new FakeUsb();
-    const tuned = await VllogicDevice.open(fake as unknown as USBDevice, { depth: 3, bytes: 8192 });
+    const tuned = await VllogicDevice.open(
+      fake as unknown as USBDevice,
+      { depth: 3, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+    );
     check(
       'open() accepts an explicit read geometry for bench runs',
-      tuned.readTuning.depth === 3 && tuned.readTuning.bytes === 8192,
-      `depth=${tuned.readTuning.depth} bytes=${tuned.readTuning.bytes}`,
+      tuned.readTuning.depth === 3 && tuned.readTuning.bytes === 8192 &&
+        tuned.readTuning.firstBlockMs === 1000 && tuned.readTuning.drainIdleMs === 0,
+      `depth=${tuned.readTuning.depth} bytes=${tuned.readTuning.bytes} ` +
+        `firstBlock=${tuned.readTuning.firstBlockMs} drain=${tuned.readTuning.drainIdleMs}`,
+    );
+  }
+
+  // ---- stop wake + first-block watchdog ----------------------------------
+  {
+    // A wedged board acknowledges everything and never completes a bulk IN. Before
+    // the wake fix, stop() returned after 750 ms but readLoop stayed parked forever.
+    const fake = new FakeUsb();
+    fake.hangWhenEmpty = true;
+    const device = await VllogicDevice.open(fake as unknown as USBDevice, {
+      depth: 2, bytes: 8192, firstBlockMs: 60_000, drainIdleMs: 0,
+    });
+    await device.startChannelMajor(
+      { channels: 4, samplerate: 20e6, thresholdVolts: 1.65 },
+      {
+        begin: () => {},
+        channel: () => {},
+        commit: () => {},
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const t0 = performance.now();
+    await device.stop();
+    const stopMs = performance.now() - t0;
+    check(
+      'stop() wakes a read loop parked on a silent endpoint',
+      device.loopCompleted && stopMs < 1500,
+      `loopCompleted=${device.loopCompleted} stopMs=${stopMs.toFixed(0)}`,
+    );
+  }
+
+  {
+    const fake = new FakeUsb();
+    fake.hangWhenEmpty = true;
+    const device = await VllogicDevice.open(fake as unknown as USBDevice, {
+      depth: 1, bytes: 8192, firstBlockMs: 60, drainIdleMs: 0,
+    });
+    let error: unknown = null;
+    device.onError = (e) => { error = e; };
+    const startedAt = performance.now();
+    await device.startChannelMajor(
+      { channels: 4, samplerate: 20e6, thresholdVolts: 1.65 },
+      { begin: () => {}, channel: () => {}, commit: () => {} },
+      undefined,
+      { onEnd: () => { /* a wedged capture must not report a normal end */ } },
+    );
+    for (let i = 0; i < 50 && error === null; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const ms = performance.now() - startedAt;
+    await device.stop();
+    const code = (error as { code?: string } | null)?.code ?? 'none';
+    check(
+      'a capture that never receives a data block fails with device.noData',
+      code === 'device.noData' && ms < 500,
+      `code=${code} after ${ms.toFixed(0)} ms`,
     );
   }
 

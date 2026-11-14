@@ -60,11 +60,43 @@ const MAX_READ_BYTES = 4 * 1024 * 1024;
 const MAX_READ_DEPTH = 32;
 const CONFIG_SETTLE_MS = 35;
 const STOP_SETTLE_MS = 750;
+/**
+ * A Logic20 starts streaming within a few milliseconds of START, so a second of
+ * silence means the board is wedged (it still answers commands and sends nothing on
+ * the bulk endpoint, the same failure the SLogic transport reports as device.noData).
+ */
+const DEFAULT_FIRST_BLOCK_MS = 1000;
+const MIN_FIRST_BLOCK_MS = 20;
+const MAX_FIRST_BLOCK_MS = 60_000;
+/**
+ * Optional pre-START drain. WebUSB cannot cancel a transferIn, so libsigrok's
+ * `sync_drain(32 x 5 ms)` has no direct form here. Instead one read is issued and
+ * raced against this idle window; data completing inside it is discarded, and the
+ * read that survives the window becomes the capture's first armed read. 0 disables it.
+ */
+const DEFAULT_DRAIN_IDLE_MS = 0;
+const MAX_DRAIN_IDLE_MS = 200;
+const MAX_DRAIN_READS = 64;
 
-/** How many reads are kept queued and how large each one is. */
+/** How many reads are kept queued, how large each one is, and how START is armed. */
 export interface VllogicReadTuning {
   readonly bytes: number;
   readonly depth: number;
+  /** Milliseconds START may go without a data block before the capture is failed. */
+  readonly firstBlockMs: number;
+  /** Idle window that ends the optional pre-START drain; 0 disables the drain. */
+  readonly drainIdleMs: number;
+}
+
+/** What the optional pre-START drain saw. Filled even when the drain is disabled. */
+export interface VllogicDrainStats {
+  enabled: boolean;
+  /** Completed reads discarded before START. */
+  reads: number;
+  bytes: number;
+  /** True when the read that outlived the idle window became the capture's first read. */
+  preArmed: boolean;
+  ms: number;
 }
 
 /**
@@ -72,18 +104,29 @@ export interface VllogicReadTuning {
  * the safe range fall back to the defaults rather than silently starving the endpoint.
  */
 export function vllogicReadTuning(search?: string): VllogicReadTuning {
-  const defaults: VllogicReadTuning = { bytes: DEFAULT_READ_BYTES, depth: DEFAULT_READ_DEPTH };
+  const defaults: VllogicReadTuning = {
+    bytes: DEFAULT_READ_BYTES,
+    depth: DEFAULT_READ_DEPTH,
+    firstBlockMs: DEFAULT_FIRST_BLOCK_MS,
+    drainIdleMs: DEFAULT_DRAIN_IDLE_MS,
+  };
   let raw = search;
   if (raw === undefined) raw = typeof location === 'undefined' ? '' : location.search;
   try {
     const params = new URLSearchParams(raw);
     const bytes = Number(params.get('vllogic-read'));
     const depth = Number(params.get('vllogic-depth'));
+    const firstBlockMs = Number(params.get('vllogic-firstblock'));
+    const drainIdleMs = Number(params.get('vllogic-drain'));
     return {
       bytes: Number.isInteger(bytes) && bytes >= 4096 && bytes <= MAX_READ_BYTES
         ? bytes : defaults.bytes,
       depth: Number.isInteger(depth) && depth >= 1 && depth <= MAX_READ_DEPTH
         ? depth : defaults.depth,
+      firstBlockMs: Number.isInteger(firstBlockMs) && firstBlockMs >= MIN_FIRST_BLOCK_MS &&
+        firstBlockMs <= MAX_FIRST_BLOCK_MS ? firstBlockMs : defaults.firstBlockMs,
+      drainIdleMs: Number.isInteger(drainIdleMs) && drainIdleMs >= 0 &&
+        drainIdleMs <= MAX_DRAIN_IDLE_MS ? drainIdleMs : defaults.drainIdleMs,
     };
   } catch {
     return defaults;
@@ -142,15 +185,30 @@ export class VllogicDevice implements Device {
   private configuredDiv = 0;
   private configuredMask = 0;
   private firstBlockChecked = false;
+  /** True once a data block (not just a command ACK) has arrived for this capture. */
+  private firstBlockSeen = false;
+  private firstBlockTimer: ReturnType<typeof setTimeout> | null = null;
   private reportedDropBlocks = 0;
   private dropoutSink: DropoutSink | null = null;
   /** Bumped by every start; a stopped-but-stuck old read loop must not touch a new one. */
   private captureEpoch = 0;
+  /**
+   * Resolves readLoop's completion wait. WebUSB cannot cancel a transferIn, so a board
+   * that stops sending leaves the loop parked; stop() calls this to break the wait
+   * instead of leaving the capture object hung for the rest of the page session.
+   */
+  private wakeLoop: (() => void) | null = null;
+  /** True once the current read loop has left its wait and started tearing down. */
+  loopCompleted = false;
 
   /** Pipelined read geometry; see vllogicReadTuning(). */
   readonly readTuning: VllogicReadTuning;
   /** Parser counters from the last capture, kept after stop() clears the parser. */
   parserStats: VllogicParserStats | null = null;
+  /** Pre-START drain result for the bench page. */
+  readonly drainStats: VllogicDrainStats = {
+    enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0,
+  };
   /** Receive-loop counters, reported once per capture. */
   readonly readStats = {
     transfers: 0,
@@ -281,7 +339,9 @@ export class VllogicDevice implements Device {
     this.stopRequested = false;
     this.running = true;
     this.firstBlockChecked = false;
+    this.firstBlockSeen = false;
     this.reportedDropBlocks = 0;
+    this.loopCompleted = false;
     this.dropoutSink = onDropout ?? null;
     // A payload is 4092 words, so this many snapshots can arrive before a flush.
     const maxSnapshots = Math.max(1, Math.floor(UHSIF_PAY_MAX / map.nchan));
@@ -293,9 +353,69 @@ export class VllogicDevice implements Device {
       if (epoch === this.captureEpoch) this.acceptBatch(words, snapshots);
     });
 
+    // Optional pre-START drain: discard whatever the endpoint still holds and hand the
+    // read that outlives the idle window to the capture loop as its first in-flight
+    // read. Disabled by default (see vllogicReadTuning); the bench page compares it.
+    const preArm = await this.drainBeforeStart(epoch);
+
     // Arm the IN transfer before START so the first block is not lost to a race.
-    this.loopDone = this.readLoop(epoch);
+    // The loop can fail from the background (first-block check, USB error); onError
+    // reports it, and the catch keeps that rejection from surfacing as unhandled.
+    this.loopDone = this.readLoop(epoch, preArm);
+    void this.loopDone.catch(() => undefined);
     await this.send(UhsifCmd.Start);
+    this.armFirstBlockWatchdog(epoch, cfg);
+  }
+
+  /**
+   * Drain the IN endpoint without cancelling a read. One transferIn is raced against
+   * `drainIdleMs`: data finishing inside the window is stale and discarded, and the
+   * read that survives it is returned for readLoop to adopt. This is the WebUSB-safe
+   * form of libsigrok's sync_drain() before START.
+   */
+  private async drainBeforeStart(
+    epoch: number,
+  ): Promise<{ request: Promise<USBInTransferResult> } | null> {
+    const stats = this.drainStats;
+    stats.enabled = this.readTuning.drainIdleMs > 0;
+    stats.reads = 0;
+    stats.bytes = 0;
+    stats.preArmed = false;
+    stats.ms = 0;
+    const idle = this.readTuning.drainIdleMs;
+    if (!stats.enabled || epoch !== this.captureEpoch) return null;
+    const startedAt = performance.now();
+    for (let i = 0; i < MAX_DRAIN_READS; i++) {
+      if (this.stopRequested || epoch !== this.captureEpoch) break;
+      let request: Promise<USBInTransferResult>;
+      try {
+        request = this.usb.transferIn(VLLOGIC_EP_IN, this.readTuning.bytes);
+      } catch {
+        break;
+      }
+      // The rejection handler stays attached, so a read that readLoop never adopts
+      // cannot surface as an unhandled rejection.
+      const outcome = await Promise.race([
+        request.then(
+          (result) => ({ kind: 'done' as const, result }),
+          () => ({ kind: 'error' as const }),
+        ),
+        delay(idle).then(() => ({ kind: 'idle' as const })),
+      ]);
+      if (outcome.kind === 'error') break;
+      if (outcome.kind === 'idle') {
+        stats.preArmed = true;
+        stats.ms = performance.now() - startedAt;
+        // Wrap the promise: an async function would otherwise await it here and lose
+        // the pending read that readLoop must adopt.
+        return { request };
+      }
+      stats.reads += 1;
+      stats.bytes += outcome.result.status === 'ok' && outcome.result.data
+        ? outcome.result.data.byteLength : 0;
+    }
+    stats.ms = performance.now() - startedAt;
+    return null;
   }
 
   /**
@@ -307,6 +427,9 @@ export class VllogicDevice implements Device {
     const map = this.map;
     const sink = this.sink;
     if (!map || !sink || snapshots <= 0) return;
+    // Data is flowing: the board is not wedged, whatever happens to this batch.
+    this.firstBlockSeen = true;
+    this.clearFirstBlockWatchdog();
     const parser = this.parser;
     if (parser !== null && !this.firstBlockChecked) {
       const header = parser.lastHeader;
@@ -373,8 +496,14 @@ export class VllogicDevice implements Device {
    * stateful across buffers.
    *
    * This is the WebUSB form of libsigrok's 16 x 256 KiB URB ring (vllogic.h:34-35).
+   *
+   * `preArm` is the read that the optional pre-START drain left pending. It becomes
+   * sequence 0, so the drain does not cost an extra read or leave a reader behind.
    */
-  private async readLoop(epoch: number): Promise<void> {
+  private async readLoop(
+    epoch: number,
+    preArm?: { request: Promise<USBInTransferResult> } | null,
+  ): Promise<void> {
     const { bytes: readBytes, depth } = this.readTuning;
     const stats = this.readStats;
     stats.transfers = 0;
@@ -398,26 +527,15 @@ export class VllogicDevice implements Device {
     const notify = (): void => {
       const resume = wake;
       wake = null;
+      if (resume !== null && this.wakeLoop === resume) this.wakeLoop = null;
       resume?.();
     };
     const wantsMore = (): boolean => this.running &&
       (this.targetSamples === 0 || this.emittedSamples < this.targetSamples);
 
-    const arm = (): void => {
-      if (closed || !alive() || inFlight.size >= depth || !wantsMore()) return;
-      const sequence = submitted++;
-      const startedAt = performance.now();
-      stats.transfers += 1;
-      let request: Promise<USBInTransferResult>;
-      try {
-        request = this.usb.transferIn(VLLOGIC_EP_IN, readBytes);
-      } catch (error) {
-        completed.set(sequence, {
-          sequence, error, bytes: 0, startedAt, completedAt: performance.now(),
-        });
-        notify();
-        return;
-      }
+    const track = (
+      sequence: number, request: Promise<USBInTransferResult>, startedAt: number,
+    ): void => {
       let task!: Promise<void>;
       task = request.then(
         (result) => {
@@ -448,14 +566,39 @@ export class VllogicDevice implements Device {
       inFlight.add(task);
     };
 
-    for (let i = 0; i < depth; i++) arm();
+    const arm = (): void => {
+      if (closed || !alive() || inFlight.size >= depth || !wantsMore()) return;
+      const sequence = submitted++;
+      const startedAt = performance.now();
+      stats.transfers += 1;
+      let request: Promise<USBInTransferResult>;
+      try {
+        request = this.usb.transferIn(VLLOGIC_EP_IN, readBytes);
+      } catch (error) {
+        completed.set(sequence, {
+          sequence, error, bytes: 0, startedAt, completedAt: performance.now(),
+        });
+        notify();
+        return;
+      }
+      track(sequence, request, startedAt);
+    };
+
+    if (preArm) {
+      stats.transfers += 1;
+      track(submitted++, preArm.request, performance.now());
+    }
+    for (let i = inFlight.size; i < depth; i++) arm();
 
     try {
       for (;;) {
         if (!alive()) break;
         while (!completed.has(nextSequence)) {
           if (inFlight.size === 0 || !this.running) break;
-          await new Promise<void>((resolve) => { wake = resolve; });
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+            if (epoch === this.captureEpoch) this.wakeLoop = resolve;
+          });
         }
         const item = completed.get(nextSequence);
         if (!item) break;
@@ -482,7 +625,12 @@ export class VllogicDevice implements Device {
       // older capture. It must not clear the new capture's running flag, publish its
       // end or overwrite its statistics.
       const current = epoch === this.captureEpoch;
-      if (current) this.running = false;
+      if (current) {
+        this.loopCompleted = true;
+        this.running = false;
+        this.clearFirstBlockWatchdog();
+        this.wakeLoop = null;
+      }
       // The device has been (or is being) stopped, so outstanding reads complete as
       // short reads. Bound the wait: a wedged board must not keep the loop alive.
       await Promise.race([Promise.allSettled([...inFlight]), delay(STOP_SETTLE_MS)]);
@@ -526,6 +674,40 @@ export class VllogicDevice implements Device {
     }
   }
 
+  /**
+   * Fail a capture whose board never starts streaming: a Logic20 ACKs every command
+   * and sends nothing on the bulk endpoint when it is wedged, so the page would sit on
+   * "Capturing" forever. Reuse `device.noData`, the same user-facing state the SLogic
+   * transport reports (and the failure notice already knows how to render).
+   */
+  private armFirstBlockWatchdog(epoch: number, cfg: CaptureConfig): void {
+    this.clearFirstBlockWatchdog();
+    const ms = this.readTuning.firstBlockMs;
+    if (!(ms > 0)) return;
+    this.firstBlockTimer = setTimeout(() => {
+      this.firstBlockTimer = null;
+      if (epoch !== this.captureEpoch || !this.running || this.firstBlockSeen) return;
+      const error = new DiagnosticError('device.noData', {
+        device: this.name,
+        deadline: Math.round(ms),
+        channels: cfg.channels,
+        rate: cfg.samplerate / 1e6,
+      });
+      this.running = false;
+      this.onError?.(error);
+      // Leave the parked read loop now; the board has already been told to stop, and
+      // its outstanding transferIn calls cannot be cancelled.
+      this.wakeLoop?.();
+      void this.send(UhsifCmd.Stop).catch(() => undefined);
+    }, ms);
+  }
+
+  private clearFirstBlockWatchdog(): void {
+    if (this.firstBlockTimer === null) return;
+    clearTimeout(this.firstBlockTimer);
+    this.firstBlockTimer = null;
+  }
+
   private endOnce(): void {
     if (this.ended) return;
     this.ended = true;
@@ -537,6 +719,10 @@ export class VllogicDevice implements Device {
   async stop(): Promise<void> {
     this.stopRequested = true;
     this.running = false;
+    this.clearFirstBlockWatchdog();
+    // A board that stopped streaming leaves readLoop parked on its completion wait.
+    // Waking it here is what turns stop() from "give up after 750 ms" into teardown.
+    this.wakeLoop?.();
     try {
       await this.send(UhsifCmd.Stop);
     } catch {

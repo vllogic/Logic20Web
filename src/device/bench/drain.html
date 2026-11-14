@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Logic20 START 前排空验证</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: #101012; color: #e8e8ea; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+  p.hint { color: #9a9aa2; margin: 0 0 18px; max-width: 1100px; }
+  fieldset { border: 1px solid #2c2c31; border-radius: 8px; padding: 12px 14px; margin: 0 0 14px; }
+  legend { color: #b9b9c0; padding: 0 4px; }
+  label { display: inline-flex; align-items: center; gap: 6px; margin: 3px 14px 3px 0; }
+  input[type=number], input[type=text], select { width: 110px; background: #17171a; color: #eee; border: 1px solid #333; border-radius: 5px; padding: 4px 6px; font: inherit; }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid #3a3a40; background: #1d1d21; color: #eee; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #775AD2; border-color: #775AD2; color: #fff; }
+  table { border-collapse: collapse; width: 100%; margin-top: 16px; font-size: 12px; }
+  th, td { border-bottom: 1px solid #26262b; padding: 5px 7px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: #9a9aa2; font-weight: 500; }
+  tbody tr.bad td { color: #ff8a8a; }
+  #status { color: #b9b9c0; margin-top: 12px; min-height: 1.5em; }
+  #json { width: 100%; height: 180px; background: #151518; color: #c9c9d0; border: 1px solid #2c2c31; border-radius: 6px; padding: 8px; font: inherit; }
+  .note { color: #9a9aa2; }
+  .ok { color: #7bd88f; }
+</style>
+</head>
+<body>
+<h1>Logic20 START 前排空验证</h1>
+<p class="hint">
+  对比 WebUSB 现状（<code>drain=0</code>）与“探测空闲 + 预 arm 交接”策略：每轮记录 START 前的排空读、
+  预 arm 是否成功、首块延迟、ACK/CRC/mask/drop/seq 统计和 stop 耗时。多轮连续运行同时验证
+  “stop 唤醒读循环”没有挂起。需要 Logic20 接在本机；局域网访问请用 <code>npm run dev:lan</code>（HTTPS）。
+</p>
+
+<fieldset>
+  <legend>采集</legend>
+  <label>采样率
+    <select id="rate">
+      <option value="20000000">20 MHz</option>
+      <option value="40000000">40 MHz</option>
+      <option value="80000000">80 MHz</option>
+      <option value="100000000">100 MHz</option>
+      <option value="160000000" selected>160 MHz</option>
+      <option value="200000000">200 MHz</option>
+    </select>
+  </label>
+  <label>通道
+    <select id="channels">
+      <option value="4">4</option>
+      <option value="8">8</option>
+      <option value="16" selected>16</option>
+      <option value="20">20</option>
+    </select>
+  </label>
+  <label>时长 <input id="seconds" type="number" value="0.2" min="0.01" step="0.01" /> s</label>
+  <label>轮数 <input id="cycles" type="number" value="4" min="1" max="20" step="1" /></label>
+  <label>drain 空闲 <input id="drain" type="number" value="20" min="0" max="200" step="1" /> ms（0 = 关闭）</label>
+</fieldset>
+
+<fieldset>
+  <legend>读取</legend>
+  <label>depth <input id="depth" type="number" value="8" min="1" max="32" step="1" /></label>
+  <label>read KiB <input id="readKiB" type="number" value="256" min="4" max="4096" step="4" /></label>
+  <label>轮间隔 <input id="gap" type="number" value="300" min="0" step="50" /> ms</label>
+</fieldset>
+
+<p>
+  <button id="connect" class="primary">连接设备</button>
+  <button id="run" disabled>运行验证</button>
+  <button id="copy" disabled>复制 JSON</button>
+</p>
+<div id="status">未连接。</div>
+
+<table hidden id="table">
+  <thead>
+    <tr>
+      <th>轮</th><th>drain ms</th><th>排空读</th><th>排空字节</th><th>preArm</th>
+      <th>配置 ms</th><th>首块 ms</th><th>运行 ms</th><th>样本</th><th>有效 MSa/s</th>
+      <th>总线 MB/s</th><th>ACK</th><th>CRC 失败</th><th>mask 不符</th><th>drop</th>
+      <th>seq 跳变</th><th>短包</th><th>stop ms</th><th>状态</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<h2 style="font-size:14px;margin:20px 0 6px">结果 JSON</h2>
+<textarea id="json" readonly placeholder="运行后在此显示，也可用“复制 JSON”。"></textarea>
+
+<script type="module" src="./drain.ts"></script>
+</body>
+</html>
