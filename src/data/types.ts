@@ -106,8 +106,15 @@ export interface SampleStore {
   commitSamples?(samples: number): void;
   dropFront(samples: number): void;
   /** Allocate storage for `samples` samples up front, so a capture does not grow (and
-   *  trigger GC) while it runs. Optional: not every store can reserve. */
-  reserveSamples?(samples: number): void;
+   *  trigger GC) while it runs. Optional: not every store can reserve. `channels`
+   *  restricts a sparse channel-major store to the selected lanes. */
+  reserveSamples?(samples: number, channels?: readonly number[]): void;
+  /** Logical channels this store actually captured (the selected subset). Optional;
+   *  absent means every channel up to `channelCount`. */
+  readonly storedChannelCount?: number;
+  isChannelStored?(channel: number): boolean;
+  /** Restrict an empty channel-major store to the selected lanes (sparse planes). */
+  setActiveChannels?(channels: readonly number[]): void;
   /** Empty the store while keeping its allocation, for a repeated capture. Optional. */
   reset?(): void;
   query(channel: number, startSample: number, endSample: number, bins: number): ColumnView;

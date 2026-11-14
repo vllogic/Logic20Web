@@ -100,8 +100,15 @@ export class PlanarSampleStore implements SampleStore {
   snapColumns: boolean;
   coreBins: number;
 
-  /** base[ch]: one bit per sample. */
+  /** base[ch]: one bit per sample. Inactive channels keep an empty plane. */
   private readonly base: BitPlane[] = [];
+  /**
+   * Channels this store actually captures. A channel-major capture can stream a subset
+   * of the logical D0..D19 lanes; inactive planes stay empty, so memory follows the
+   * selection instead of the 20-lane model. Interleaved/imported stores activate all.
+   */
+  private active: boolean[] = [];
+  private activeCount = 0;
   /** hi[level][ch] / lo[level][ch] for level 1..MAX_LEVEL. Index 0 is unused. */
   private readonly hi: BitPlane[][] = [];
   private readonly lo: BitPlane[][] = [];
@@ -166,6 +173,8 @@ export class PlanarSampleStore implements SampleStore {
     this.coreBins = opts.coreBins ?? DEFAULT_CORE_BINS;
     this.pendingExpected = new Array<boolean>(channelCount).fill(false);
     this.pendingWritten = new Uint32Array(channelCount);
+    this.active = new Array<boolean>(channelCount).fill(true);
+    this.activeCount = channelCount;
 
     for (let c = 0; c < channelCount; c++) this.base.push(new BitPlane(BASE_BLOCK_BITS_LOG));
     this.binSize[0] = 1;
@@ -187,23 +196,69 @@ export class PlanarSampleStore implements SampleStore {
     }
   }
 
+  /** Channels whose planes are actually allocated and written. */
+  get storedChannelCount(): number {
+    return this.activeCount;
+  }
+
+  isChannelStored(channel: number): boolean {
+    return channel >= 0 && channel < this.channelCount && this.active[channel] === true;
+  }
+
   /**
-   * Allocate base and pyramid storage for `samples` samples up front.
-   *
-   * A capture whose length is known before the stream starts should call this: base
-   * planes grow in 2 MiB blocks per channel, and at 320 MB/s that is a fresh block
-   * every few milliseconds, which is enough allocation to trigger a GC pause long
-   * enough to overflow the device FIFO. Reserving turns mid-capture growth into plain
-   * writes to memory that already exists.
+   * Restrict a channel-major store to the selected logical lanes. Must be called while
+   * the store is empty: changing the set mid-capture would make length refer to planes
+   * with different histories. Inactive planes release their blocks, so a 2-lane capture
+   * on a 20-lane model costs 2 planes, not 20.
    */
-  reserveSamples(samples: number): void {
+  setActiveChannels(channels: readonly number[]): void {
+    if (this.length !== 0 || this.pending) {
+      throw new Error('setActiveChannels() needs an empty, uncommitted store');
+    }
+    if (channels.length === 0) throw new Error('a capture needs at least one active channel');
+    const next = new Array<boolean>(this.channelCount).fill(false);
+    for (const channel of channels) {
+      if (!Number.isInteger(channel) || channel < 0 || channel >= this.channelCount) {
+        throw new Error(`channel ${channel} is outside 0..${this.channelCount - 1}`);
+      }
+      next[channel] = true;
+    }
+    this.active = next;
+    this.activeCount = next.reduce((count, on) => count + (on ? 1 : 0), 0);
+    for (let c = 0; c < this.channelCount; c++) {
+      if (this.active[c]) continue;
+      // Free blocks a previous capture on this store may have allocated.
+      this.base[c]!.blocks.length = 0;
+      this.base[c]!.bits = 0;
+      this.base[c]!.head = 0;
+      for (let k = 1; k <= MAX_LEVEL; k++) {
+        for (const plane of [this.hi[k]![c]!, this.lo[k]![c]!]) {
+          plane.blocks.length = 0;
+          plane.bits = 0;
+          plane.head = 0;
+        }
+      }
+    }
+  }
+
+  /**
+   * Allocate base and pyramid storage for `samples` samples up front. `channels` selects
+   * the sparse set for a channel-major capture; omitted means every logical channel.
+   */
+  reserveSamples(samples: number, channels?: readonly number[]): void {
     if (!Number.isInteger(samples) || samples <= 0) return;
+    if (channels !== undefined) this.setActiveChannels(channels);
     const end = samples + this.baseSkew;
-    for (const plane of this.base) plane.reserve(end);
+    for (let c = 0; c < this.channelCount; c++) {
+      if (this.active[c]) this.base[c]!.reserve(end);
+    }
     for (let k = 1; k <= MAX_LEVEL; k++) {
       const bins = Math.ceil(samples / this.binSize[k]!) + 1;
-      for (const plane of this.hi[k]!) plane.reserve(bins);
-      for (const plane of this.lo[k]!) plane.reserve(bins);
+      for (let c = 0; c < this.channelCount; c++) {
+        if (!this.active[c]) continue;
+        this.hi[k]![c]!.reserve(bins);
+        this.lo[k]![c]!.reserve(bins);
+      }
     }
   }
 
@@ -252,6 +307,9 @@ export class PlanarSampleStore implements SampleStore {
     if (this.pending) {
       throw new Error('append() cannot interleave with an uncommitted channel-major frame');
     }
+    if (this.activeCount !== this.channelCount) {
+      throw new Error('append() needs every logical channel active; use appendChannel() for a subset');
+    }
     const bps = this.bytesPerSample;
     if (chunk.byteLength % bps !== 0) {
       throw new Error(`chunk of ${chunk.byteLength} bytes is not a whole number of ${bps}-byte samples`);
@@ -292,6 +350,9 @@ export class PlanarSampleStore implements SampleStore {
     for (const channel of channels) {
       if (!Number.isInteger(channel) || channel < 0 || channel >= this.channelCount) {
         throw new Error(`channel ${channel} is outside 0..${this.channelCount - 1}`);
+      }
+      if (!this.active[channel]) {
+        throw new Error(`channel ${channel} is not active in this store`);
       }
       if (this.pendingExpected[channel]) {
         throw new Error(`channel ${channel} appears twice in one channel-major frame`);
@@ -349,12 +410,12 @@ export class PlanarSampleStore implements SampleStore {
     }
     const to = this.length + samples;
     if (to > 0x7fffffff) throw new Error(`capture would exceed the 2^31 sample ceiling (${to})`);
-    // A frame may declare fewer channels than the store width (a narrow capture in a
-    // wider store). extendTo() the untouched planes so the shared pyramid reduction
-    // sees a zero-filled block instead of an unallocated one.
+    // A channel-major frame may declare fewer channels than the store width (a sparse
+    // selection, or a narrow capture in a wider model). Only active planes are extended;
+    // inactive lanes have no storage and are never queried.
     const dst = to + this.baseSkew;
     for (let channel = 0; channel < this.channelCount; channel++) {
-      this.base[channel]!.extendTo(dst);
+      if (this.active[channel]) this.base[channel]!.extendTo(dst);
     }
     this.length = to;
     this.validBins[0] = to;
@@ -383,7 +444,9 @@ export class PlanarSampleStore implements SampleStore {
     const origin = this.droppedTotal - (this.droppedTotal % 512);
     if (origin > this.baseOrigin) {
       const d = origin - this.baseOrigin;
-      for (const plane of this.base) plane.dropFront(d);
+      for (let c = 0; c < this.channelCount; c++) {
+        if (this.active[c]) this.base[c]!.dropFront(d);
+      }
       this.baseOrigin = origin;
     }
     this.baseSkew = this.droppedTotal - this.baseOrigin;
@@ -398,6 +461,7 @@ export class PlanarSampleStore implements SampleStore {
       if (releasable > this.levelHead[k]!) {
         const bins = releasable - this.levelHead[k]!;
         for (let c = 0; c < this.channelCount; c++) {
+          if (!this.active[c]) continue;
           this.hi[k]![c]!.dropFront(bins);
           this.lo[k]![c]!.dropFront(bins);
         }
@@ -676,7 +740,9 @@ export class PlanarSampleStore implements SampleStore {
       const b0 = this.validBins[k]!;
       const b1 = Math.floor(absEnd / B);
       if (b1 <= b0) break; // nothing complete at this level, so nothing above it either
-      for (let c = 0; c < this.channelCount; c++) this.reduceRange(k, c, b0, b1);
+      for (let c = 0; c < this.channelCount; c++) {
+        if (this.active[c]) this.reduceRange(k, c, b0, b1);
+      }
       this.validBins[k] = b1;
     }
   }
@@ -818,7 +884,9 @@ export class PlanarSampleStore implements SampleStore {
       if (st !== HAS_BOTH && coreEnd < s1) st |= this.rangeState(ch, coreEnd, s1, level - 1);
       return st;
     }
-    return this.base[ch]!.rangeState(s0 - this.baseOrigin, s1 - this.baseOrigin);
+    return this.active[ch]
+      ? this.base[ch]!.rangeState(s0 - this.baseOrigin, s1 - this.baseOrigin)
+      : 0;
   }
 
   /** Deepest level whose bins are small enough to give a column at least CORE_BINS of them. */
@@ -862,6 +930,19 @@ export class PlanarSampleStore implements SampleStore {
     }
     const low = this.scratchLow, high = this.scratchHigh;
     const edge = this.scratchEdge, packed = this.scratchPacked;
+
+    if (!this.active[channel]) {
+      // A logical lane that this capture did not stream reads as a flat idle channel.
+      // The UI normally avoids asking, but decoders/assistant tools may still address it.
+      low.fill(0);
+      high.fill(0);
+      edge.fill(0);
+      packed.fill(0);
+      return {
+        channel, startSample: s, endSample: e, bins,
+        low, high, edge, packed,
+      };
+    }
 
     // Column i covers [s + floor(i*width/bins), s + floor((i+1)*width/bins)). Both ends are
     // derived from i so the columns cannot drift, they tile [s, e) exactly while
@@ -953,6 +1034,7 @@ export class PlanarSampleStore implements SampleStore {
     if (channel < 0 || channel >= this.channelCount || (channel | 0) !== channel) {
       throw new Error(`channel ${channel} out of range 0..${this.channelCount - 1}`);
     }
+    if (!this.active[channel]) return null;
     if (!Number.isFinite(startSample) || !Number.isFinite(endSample)) {
       throw new Error(`edges range must be finite, got [${startSample}, ${endSample})`);
     }
@@ -1025,7 +1107,7 @@ export class PlanarSampleStore implements SampleStore {
       for (const p of this.hi[k]!) pyramidBytes += p.byteLength();
       for (const p of this.lo[k]!) pyramidBytes += p.byteLength();
     }
-    const usedBase = Math.ceil(this.length / 8) * this.channelCount;
+    const usedBase = Math.ceil(this.length / 8) * this.activeCount;
     return {
       baseBytes,
       pyramidBytes,
@@ -1038,6 +1120,7 @@ export class PlanarSampleStore implements SampleStore {
   /** Exposed for tests: the raw sample bit, no pyramid involved. */
   sampleAt(channel: number, index: number): number {
     if (index < 0 || index >= this.length) throw new Error(`sample ${index} out of range`);
+    if (!this.active[channel]) return 0;
     return this.base[channel]!.getBit(index + this.baseSkew);
   }
 }

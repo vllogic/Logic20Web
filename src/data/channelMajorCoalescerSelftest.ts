@@ -122,6 +122,35 @@ function run(batch: number, blocks: number) {
     `length=${store.length}`);
 }
 
+{
+  // A channel-major capture may stream a subset of the logical lanes. Only the active
+  // planes may allocate; the untouched lanes must read as flat zero and cost nothing.
+  const store = new PlanarSampleStore({ channelCount: 20, samplerate: 20e6 });
+  store.setActiveChannels([2, 5, 19]);
+  store.reserveSamples(32);
+  const sink = new ChannelMajorCoalescer(store, 0);
+  const words = new Uint32Array([0xAAAAAAAA, 0x0F0F0F0F, 0xFFFFFFFF]);
+  sink.begin([2, 5, 19]);
+  sink.channel(2, 0, words.subarray(0, 1));
+  sink.channel(5, 0, words.subarray(1, 2));
+  sink.channel(19, 0, words.subarray(2, 3));
+  sink.commit(32);
+  const full = new PlanarSampleStore({ channelCount: 20, samplerate: 20e6 });
+  full.reserveSamples(32);
+  const view = store.query(3, 0, 32, 8);
+  check(
+    'a sparse channel-major store allocates only the selected lanes',
+    store.storedChannelCount === 3 && store.isChannelStored(2) &&
+      !store.isChannelStored(3) && store.length === 32 &&
+      store.sampleAt(2, 0) === 0 && store.sampleAt(19, 31) === 1 &&
+      store.sampleAt(3, 0) === 0 && store.edges(3, 0, 32).length === 0 &&
+      view.low.every((value) => value === 0) &&
+      store.memory().totalBytes * 2 < full.memory().totalBytes,
+    `stored=${store.storedChannelCount} len=${store.length} ` +
+      `sparse=${store.memory().totalBytes} full=${full.memory().totalBytes}`,
+  );
+}
+
 const failed = results.filter((r) => !r.pass).length;
 console.log(results.map((r) => `${r.pass ? 'PASS' : 'FAIL'}  ${r.name}\n        ${r.detail}`).join('\n'));
 console.log(`\n${results.length - failed}/${results.length} passed`);
