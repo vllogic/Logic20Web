@@ -398,6 +398,14 @@ export class App {
   private unloadGuard: ((event: BeforeUnloadEvent) => void) | null = null;
   /** Info about the file just opened (e.g. probes an old .sr could not carry); null when none. */
   private fileNotice: { key: MessageKey; vars?: MessageVars } | null = null;
+  /**
+   * First sample index at which the running capture reported a device FIFO overflow, or
+   * null. The transport knows the edge but not how many samples were lost, so the notice
+   * says "near this time" rather than inventing a span.
+   */
+  private captureDropAt: number | null = null;
+  /** The user closed the overflow notice for this capture; the next capture re-arms it. */
+  private captureDropDismissed = false;
   private detailedLabels = true;
   /** "Wheel zooms without Ctrl" (PulseView habit); persisted with the workspace. */
   private wheelZooms = false;
@@ -640,6 +648,8 @@ export class App {
     platformNotice: HTMLDivElement; platformNoticeText: HTMLSpanElement;
     platformNoticeDismiss: HTMLButtonElement; hintDetail: HTMLSpanElement;
     fileNotice: HTMLDivElement; fileNoticeText: HTMLSpanElement; fileNoticeDismiss: HTMLButtonElement;
+    captureNotice: HTMLDivElement; captureNoticeText: HTMLSpanElement;
+    captureNoticeDismiss: HTMLButtonElement;
     errorDetails: HTMLDetailsElement; errorDetailText: HTMLSpanElement;
     errorAction: HTMLButtonElement;
     fileInput: HTMLInputElement;
@@ -687,6 +697,9 @@ export class App {
       fileNotice: must<HTMLDivElement>('file-notice'),
       fileNoticeText: must<HTMLSpanElement>('file-notice-text'),
       fileNoticeDismiss: must<HTMLButtonElement>('file-notice-dismiss'),
+      captureNotice: must<HTMLDivElement>('capture-notice'),
+      captureNoticeText: must<HTMLSpanElement>('capture-notice-text'),
+      captureNoticeDismiss: must<HTMLButtonElement>('capture-notice-dismiss'),
       hintDetail: must<HTMLSpanElement>('empty-hint-detail'),
       errorDetails: must<HTMLDetailsElement>('error-banner-details'),
       errorDetailText: must<HTMLSpanElement>('error-banner-detail-text'),
@@ -4424,6 +4437,11 @@ export class App {
     });
     this.el.errorRetry.addEventListener('click', () => void this.retryAcquire());
     this.el.fileNoticeDismiss.addEventListener('click', () => this.setFileNotice(null));
+    this.el.captureNoticeDismiss.addEventListener('click', () => {
+      this.captureDropDismissed = true;
+      this.renderCaptureNotice();
+      this.relayout();
+    });
     this.el.platformNoticeDismiss.addEventListener('click', () => {
       this.platformNoticeDismissed = true;
       try { sessionStorage.setItem(PLATFORM_NOTICE_DISMISSED_KEY, '1'); } catch { /* per-tab convenience only */ }
@@ -4597,6 +4615,17 @@ export class App {
     const notice = this.fileNotice;
     this.el.fileNoticeText.textContent = notice ? t(notice.key, notice.vars) : '';
     this.el.fileNotice.hidden = notice === null;
+  }
+
+  private renderCaptureNotice(): void {
+    const at = this.captureDropAt;
+    const show = at !== null && !this.captureDropDismissed;
+    this.el.captureNoticeText.textContent = show
+      ? t('notice.captureDrop', {
+        at: (at / Math.max(1, this.captureStore.samplerate)).toFixed(3),
+      })
+      : '';
+    this.el.captureNotice.hidden = !show;
   }
 
   private renderPlatformNotice(): void {
@@ -6147,6 +6176,9 @@ export class App {
       this.captureBytes = 0;
       this.lostSamples = 0;
       this.droppedTotal = 0;
+      this.captureDropAt = null;
+      this.captureDropDismissed = false;
+      this.renderCaptureNotice();
       this.captureIsLoop = isLoop;
       this.captureMode = mode;
       this.triggerStreamArmedAt = null;
@@ -6449,6 +6481,16 @@ export class App {
       };
       const dropoutSink = (pos: number, missing: number) => {
         if (generation !== this.captureGeneration) return;
+        if (missing === 0) {
+          // The device's drop_flag is latched: samples were lost at or after `pos`, but
+          // the transport cannot count them. Flag the capture instead of inventing a
+          // filler span, which would place every later sample on a guessed timeline.
+          if (this.captureDropAt === null) {
+            this.captureDropAt = pos;
+            if (!this.captureDropDismissed) this.renderCaptureNotice();
+          }
+          return;
+        }
         // A transfer the device could not fill. Append filler for the lost samples so
         // store time keeps tracking device time, then mark that span untrusted.
         //
@@ -6665,7 +6707,7 @@ export class App {
           },
         );
         this.captureCoalescer = coalescer;
-        await device.startChannelMajor(cfg, coalescer, undefined, startOptions);
+        await device.startChannelMajor(cfg, coalescer, dropoutSink, startOptions);
         // onEnd normally flushed already; this is idempotent and covers a stop that
         // bypassed the end callback. The coalescer stays attached until finishCapture
         // so a later onEnd can still publish the tail.

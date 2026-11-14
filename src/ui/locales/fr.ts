@@ -164,6 +164,7 @@ export const fr: Messages = {
   'notice.noUsbInsecure': 'Cette page n’est pas un contexte sécurisé : elle permet seulement d’afficher et de décoder des fichiers. Pour connecter un appareil, ouvrez-la en HTTPS (ou localhost) dans Chrome ou Edge.',
   'notice.dismiss': 'Fermer',
   'notice.srProbesDropped': '{file} déclare {declared} voies, mais ses échantillons n’en contiennent que {loaded} ; les {dropped} autres n’ont pas été chargées.',
+  'notice.captureDrop': 'Débordement de l’appareil : des échantillons ont été perdus vers {at} s de cette acquisition ; la chronologie peut ne pas correspondre au temps réel.',
 
   // ------------------------------------------------------- device menu
   'deviceMenu.model': 'Modèle',

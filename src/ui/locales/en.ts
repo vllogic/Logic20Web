@@ -168,6 +168,7 @@ export const en = {
   'notice.noUsbInsecure': 'This page is not a secure context, so it can only view and decode files. To connect a device, open it over HTTPS (or localhost) in Chrome or Edge.',
   'notice.dismiss': 'Dismiss',
   'notice.srProbesDropped': '{file} declares {declared} probes, but its samples carry only {loaded}; the other {dropped} were not loaded.',
+  'notice.captureDrop': 'Device overflow: samples were lost near {at} s into this capture; the timeline may not match real time.',
 
   // ------------------------------------------------------- device menu
   'deviceMenu.model': 'Model',

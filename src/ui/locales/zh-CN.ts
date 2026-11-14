@@ -162,6 +162,7 @@ export const zhCN: Messages = {
   'notice.noUsbInsecure': '当前页面不是安全上下文，只能查看和解码文件。连接设备请在 Chrome 或 Edge 中通过 HTTPS（或 localhost）打开本页。',
   'notice.dismiss': '关闭',
   'notice.srProbesDropped': '{file} 声明了 {declared} 个通道，但其采样数据只包含 {loaded} 个；其余 {dropped} 个通道未加载。',
+  'notice.captureDrop': '设备溢出：本次采集在约 {at} s 处丢失了样本，时间轴可能与真实时间不一致。',
 
   // ------------------------------------------------------- device menu
   'deviceMenu.model': '型号',
