@@ -10,10 +10,11 @@
  * into the planar store. No sample is transposed to the interleaved layout the SLogic U3
  * devices use.
  *
- * The transport runs on the page thread for now. The device is 5 Gbit/s and a 20-lane
- * 160 MHz capture is 400 MB/s. Reads are pipelined instead of serial: the endpoint
- * always has `depth` transferIn calls outstanding, so a completed buffer is consumed
- * while the next reads are already queued. The geometry follows libsigrok's vllogic
+ * The production app runs this transport inside a Dedicated Worker
+ * (`vllogicWorker.ts`); the class itself is thread-agnostic. The device is SuperSpeed and
+ * a 20-lane 120 MHz capture is 300 MB/s. Reads are pipelined instead of serial: the
+ * endpoint always has `depth` transferIn calls outstanding, so a completed buffer is
+ * consumed while the next reads are already queued. The geometry follows libsigrok's vllogic
  * driver, whose receive ring is 16 x 256 KiB (vllogic.h:34-35); WebUSB cannot express
  * an URB ring, but the same "always keep reads queued" rule is what keeps the device's
  * FIFO draining. See `vllogicReadTuning()` for the bring-up overrides.
@@ -207,6 +208,8 @@ export class VllogicDevice implements Device {
   private emittedSamples = 0;
   /** Host-side decimation for the slow rates (10/5/2.5 MHz keep every 2/4/8th). */
   private decimator: VllogicDecimator | null = null;
+  /** Input snapshots consumed per output snapshot (1 when the rate is not decimated). */
+  private decimateFactor = 1;
   /** Loop captures run until stop(), so stop() must not wait for a sample budget. */
   private loopMode = false;
   private decimateBuffers: Uint32Array[] = [];
@@ -369,7 +372,14 @@ export class VllogicDevice implements Device {
     this.map = map;
     this.sink = sink;
     this.emittedSamples = 0;
-    this.targetSamples = Math.max(0, options?.deviceSampleLimit ?? 0);
+    // Store commits are whole 32-sample snapshots, so a target that is not a multiple of
+    // 32 cannot be delivered exactly. Round it down once, here, instead of clamping each
+    // batch with Math.ceil and overshooting the budget by up to 31 samples. A request
+    // below one snapshot still gets one, so "finite" never degenerates into "unlimited".
+    const requested = Math.max(0, Math.floor(options?.deviceSampleLimit ?? 0));
+    this.targetSamples = requested > 0
+      ? Math.max(32, Math.floor(requested / 32) * 32)
+      : 0;
     this.loopMode = options?.loop === true;
     this.onCaptureEnd = options?.onEnd ?? null;
     this.ended = false;
@@ -390,6 +400,7 @@ export class VllogicDevice implements Device {
     this.decimator = rate.decimate > 1
       ? new VllogicDecimator(map.nchan, rate.decimate)
       : null;
+    this.decimateFactor = rate.decimate;
     this.decimateBuffers = this.decimator
       ? Array.from({ length: map.nchan },
         () => new Uint32Array(Math.ceil(maxSnapshots / rate.decimate) + 1))
@@ -401,7 +412,7 @@ export class VllogicDevice implements Device {
 
     // Optional pre-START drain: discard whatever the endpoint still holds and hand the
     // read that outlives the idle window to the capture loop as its first in-flight
-    // read. Disabled by default (see vllogicReadTuning); the bench page compares it.
+    // read. Enabled by default (20 ms); `?vllogic-drain=0` disables it.
     const preArm = await this.drainBeforeStart(epoch);
 
     // Arm the IN transfer before START so the first block is not lost to a race.
@@ -502,11 +513,17 @@ export class VllogicDevice implements Device {
       this.dropoutSink?.(this.emittedSamples, 0);
     }
     // Pipelined reads can deliver buffers that straddle the sample limit. Keep whole
-    // snapshots only, so the sink still commits a 32-sample multiple.
+    // snapshots only, so the sink still commits a 32-sample multiple; targetSamples was
+    // aligned down to a snapshot at start, so this clamp lands exactly on the budget.
+    // A decimated rate consumes `decimateFactor` input snapshots per output snapshot:
+    // clamping to the output count would skip chunks and break the tail's continuity,
+    // so convert the remaining output snapshots back to input snapshots first.
     if (this.targetSamples > 0) {
       const remaining = this.targetSamples - this.emittedSamples;
       if (remaining <= 0) return;
-      snapshots = Math.min(snapshots, Math.ceil(remaining / 32));
+      snapshots = Math.min(
+        snapshots, Math.floor(remaining / 32) * this.decimateFactor,
+      );
     }
     // Deinterleave first, then decimate per channel. The decimator carries the bits
     // that do not fill a whole output word across batches, so the committed sample
@@ -838,10 +855,26 @@ export class VllogicDevice implements Device {
     this.dropoutSink = null;
   }
 
+  /**
+   * Stop, release interface 0 and close the device. Unlike terminate(), the caller can
+   * await this: the bench pages run many captures on one connection and must not race a
+   * fixed settle timer against the release.
+   */
+  async release(): Promise<void> {
+    try {
+      await this.stop();
+    } catch {
+      // Teardown must still release the interface when the stop path itself failed.
+    }
+    try {
+      await this.usb.releaseInterface(0);
+    } catch {
+      // Already released, or the device is gone; close() below is still worth trying.
+    }
+    await this.usb.close().catch(() => undefined);
+  }
+
   terminate(): void {
-    void this.stop().finally(() => {
-      void this.usb.releaseInterface(0).catch(() => undefined)
-        .then(() => this.usb.close().catch(() => undefined));
-    });
+    void this.release();
   }
 }

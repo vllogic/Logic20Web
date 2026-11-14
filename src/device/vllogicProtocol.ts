@@ -416,6 +416,15 @@ export class VllogicParser {
   private batchWords = 0;
   private batchSnapshots = 0;
   private carry = new Uint8Array(0);
+  /**
+   * Bytes of a rejected header candidate that still need rescanning. A corrupt header is
+   * rejected after its first byte already matched the block magic, so the other 15 bytes
+   * may hide the next real header; they are replayed at the front of the stream (the
+   * native parser's `replay`, uhsif_rx.c:794-795) instead of being treated as another
+   * header candidate. This keeps the resync to the byte after the false magic and counts
+   * one `crcFail` per corrupt block instead of one per shifted candidate.
+   */
+  private replay = new Uint8Array(0);
   private dropActive = false;
   /**
    * Drop the payload of a block whose header mask is not the configured one. Its words
@@ -447,7 +456,17 @@ export class VllogicParser {
       this.carry = new Uint8Array(0);
     }
     let off = 0;
-    while (off < data.length) {
+    while (off < data.length || this.replay.length > 0) {
+      // A rejected header's tail is scanned before the current input, in stream order.
+      if (this.replay.length > 0) {
+        const rest = data.length - off;
+        const joined = new Uint8Array(this.replay.length + rest);
+        joined.set(this.replay, 0);
+        if (rest > 0) joined.set(data.subarray(off), this.replay.length);
+        data = joined;
+        off = 0;
+        this.replay = new Uint8Array(0);
+      }
       if (this.state === 2) {
         const remaining = data.length - off;
         // `payRem` counts payload dwords, not bytes: the firmware's header field is
@@ -516,14 +535,12 @@ export class VllogicParser {
 
   /** End of stream: publish complete snapshots, drop a partial one. */
   finish(): void {
-    this.flushBatch();
-    if (this.batchWords > 0) this.stats.partialSnapshots += 1;
-    this.batchWords = 0;
-    this.batchSnapshots = 0;
+    this.resetSnapshotPhase();
     this.hdrLen = 0;
     this.payRem = 0;
     this.state = 0;
     this.carry = new Uint8Array(0);
+    this.replay = new Uint8Array(0);
     this.discardPayload = false;
   }
 
@@ -555,6 +572,20 @@ export class VllogicParser {
     this.batchSnapshots = 0;
   }
 
+  /**
+   * Drop the snapshot being assembled when its block was rejected, without losing the
+   * complete snapshots already batched before it. The incomplete tail is counted as a
+   * partial snapshot, matching uhsif_rx.c:790-793 / 814-818 / 835-838.
+   */
+  private resetSnapshotPhase(): void {
+    if (this.batchSnapshots > 0) this.flushBatch();
+    if (this.batchWords > 0) {
+      this.batchWords = 0;
+      this.batchSnapshots = 0;
+      this.stats.partialSnapshots += 1;
+    }
+  }
+
   private parseHeader(): void {
     const w0 = readU32(this.hdr, 0);
     const w1 = readU32(this.hdr, 4);
@@ -562,13 +593,14 @@ export class VllogicParser {
     const w3 = readU32(this.hdr, 12);
     if ((w0 >>> 16) !== vllogicCrc16(w1, w2, w3)) {
       this.stats.crcFail++;
-      // The bytes read as a header may contain the real next header; rescan from
-      // the byte after the first magic byte instead of swallowing the gate.
-      this.batchWords = 0;
-      this.batchSnapshots = 0;
-      this.hdr.copyWithin(0, 1);
-      this.hdrLen = UHSIF_HDR_SIZE - 1;
-      this.state = 1;
+      // The bytes read as a header may contain the real next header; rescan from the
+      // byte after the first magic byte instead of swallowing the gate. The 15 bytes
+      // after that byte are replayed into SCAN, so the failed candidate is counted once
+      // and a shifted copy is never tested as a header (uhsif_rx.c:780-797).
+      this.resetSnapshotPhase();
+      this.replay = this.hdr.slice(1);
+      this.hdrLen = 0;
+      this.state = 0;
       return;
     }
     this.stats.blocks++;
@@ -580,8 +612,7 @@ export class VllogicParser {
     }
     if (plen < UHSIF_PAY_MIN || plen > UHSIF_PAY_MAX) {
       this.stats.badLen++;
-      this.batchWords = 0;
-      this.batchSnapshots = 0;
+      this.resetSnapshotPhase();
       this.state = 0;
       return;
     }
@@ -611,8 +642,7 @@ export class VllogicParser {
     this.discardPayload = (w1 & 0xFFFFF) !== this.map.mask;
     if (this.discardPayload) {
       this.stats.maskMismatch++;
-      this.batchWords = 0;
-      this.batchSnapshots = 0;
+      this.resetSnapshotPhase();
     }
     this.payRem = plen;
     this.state = 2;

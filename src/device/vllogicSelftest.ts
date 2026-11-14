@@ -50,11 +50,11 @@ function u32(value: number): number[] {
 
 function block(
   mask: number, div: number, seq: number, payload: readonly number[],
-  corrupt = false, drop = false,
+  corrupt = false, drop = false, capturing = true,
 ): Uint8Array {
   const plen = payload.length;
   const w1 = mask >>> 0;
-  const w2 = ((div << 15) | (drop ? 1 << 22 : 0) | (1 << 23)) >>> 0; // capturing=1
+  const w2 = ((div << 15) | (drop ? 1 << 22 : 0) | (capturing ? 1 << 23 : 0)) >>> 0;
   const w3 = ((plen << 12) | (seq << 24)) >>> 0;
   const crc = vllogicCrc16(w1, w2, w3);
   const w0 = (((corrupt ? crc ^ 0xFFFF : crc) << 16) | UHSIF_BLK_MAGIC16) >>> 0;
@@ -262,7 +262,7 @@ async function main(): Promise<void> {
     received.every((words, i) => words.every((word, j) => word === wordsPerSnapshot[i]![j]));
   check(
     'parser recovers from junk/corrupt headers and carries split words',
-    matches && parser.stats.acks === 1 && parser.stats.crcFail >= 1,
+    matches && parser.stats.acks === 1 && parser.stats.crcFail === 1,
     `snapshots=${received.length}/${snapshots} acks=${parser.stats.acks} crcFail=${parser.stats.crcFail}`,
   );
 
@@ -317,6 +317,33 @@ async function main(): Promise<void> {
     );
   }
 
+  // A corrupt header rejects only the snapshot being assembled: snapshots already
+  // batched before it are delivered, the partial tail is counted once, and the rescan
+  // must still find the next valid block (one crcFail, not one per shifted byte).
+  {
+    const first121 = Array.from({ length: 121 }, (_, i) => (0x12340000 | i) >>> 0);
+    const next120 = Array.from({ length: 120 }, (_, i) => (0x56780000 | i) >>> 0);
+    let recovered = 0;
+    const seen: number[] = [];
+    const resync = new VllogicParser(map, (words, batchSnapshots) => {
+      recovered += batchSnapshots;
+      seen.push(...Array.from(words.subarray(0, batchSnapshots * map.nchan)));
+    });
+    resync.feed(block(0xFFFFF, 15, 1, first121));
+    resync.feed(block(0xFFFFF, 15, 2, [0xDEADBEEF], true));
+    resync.feed(block(0xFFFFF, 15, 3, next120));
+    resync.finish();
+    const tail = seen.slice(-120);
+    check(
+      'a corrupt header keeps complete snapshots and drops only the partial tail',
+      recovered === 12 && resync.stats.crcFail === 1 &&
+        resync.stats.partialSnapshots === 1 &&
+        tail.length === 120 && tail.every((word, i) => word === next120[i]),
+      `snapshots=${recovered} crcFail=${resync.stats.crcFail} ` +
+        `partial=${resync.stats.partialSnapshots} tail=${tail.length}`,
+    );
+  }
+
   // A 121-word payload is 6 whole 20-lane snapshots plus 1 dangling word: end of
   // stream publishes the 6 and drops the partial.
   let delivered = 0;
@@ -328,6 +355,22 @@ async function main(): Promise<void> {
     delivered === 6,
     `delivered=${delivered}`,
   );
+
+  // Block sequence is a free-running 8-bit counter; a jump means the board or the host
+  // lost a block. The parser reports it without dropping the samples that did arrive.
+  {
+    const payload120 = Array.from({ length: 120 }, (_, i) => i + 1);
+    let delivered = 0;
+    const gaps = new VllogicParser(map, (_words, batchSnapshots) => { delivered += batchSnapshots; });
+    gaps.feed(block(0xFFFFF, 15, 1, payload120));
+    gaps.feed(block(0xFFFFF, 15, 4, payload120));
+    gaps.finish();
+    check(
+      'a sequence gap is counted without discarding the next block',
+      delivered === 12 && gaps.stats.seqJumps === 1 && gaps.stats.crcFail === 0,
+      `snapshots=${delivered} seqJumps=${gaps.stats.seqJumps} crcFail=${gaps.stats.crcFail}`,
+    );
+  }
 
   // The real block geometry: 4092 payload dwords is 204 snapshots at 20 lanes plus a
   // 12-word tail. This is the regression guard for treating payload_len as bytes.
@@ -389,6 +432,101 @@ async function main(): Promise<void> {
         store.sampleAt(0, 0) === (payload[1]! & 1) &&
         store.sampleAt(19, 31) === ((payload[19]! >>> 31) & 1),
       `ended=${ended} length=${store.length} commits=${commits} commands=${commands.length}`,
+    );
+  }
+
+  // A finite budget is rounded down to the 32-sample commit unit once, so the store
+  // ends exactly at the budget instead of up to 31 samples past it.
+  {
+    const fake = new FakeUsb();
+    const perBlock = 40;
+    const payload: number[] = [];
+    for (let s = 0; s < perBlock; s++) {
+      for (let c = 0; c < 4; c++) payload.push(((s * 0x9E3779B1) ^ c) >>> 0);
+    }
+    fake.chunks.push(block(0xF, 120, 1, payload));
+    const device = await VllogicDevice.open(
+      fake as unknown as USBDevice,
+      { depth: 2, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+    );
+    const store = new PlanarSampleStore({ channelCount: 4, samplerate: 20e6 });
+    let ended = false;
+    const requested = 30 * 32 + 17;
+    const aligned = 30 * 32;
+    await device.startChannelMajor(
+      { channels: 4, samplerate: 20e6, thresholdVolts: 1.65 },
+      {
+        begin: (channels) => store.beginFrame(channels),
+        channel: (channel, start, words) => store.appendChannel(channel, start, words),
+        commit: (samples) => store.commitSamples(samples),
+      },
+      undefined,
+      { deviceSampleLimit: requested, onEnd: () => { ended = true; } },
+    );
+    for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+    await device.stop();
+    check(
+      'a non-snapshot sample budget is aligned down and lands exactly',
+      ended && store.length === aligned,
+      `ended=${ended} length=${store.length} requested=${requested} aligned=${aligned}`,
+    );
+  }
+
+  // The same budget clamp at a host-decimated rate must consume decimateFactor input
+  // snapshots per remaining output snapshot, otherwise the tail skips chunks and the
+  // delivered samples are no longer contiguous. 80 input snapshots / 2 = 30 outputs.
+  {
+    const fake = new FakeUsb();
+    const perBlock = 80;
+    const payload: number[] = [];
+    for (let s = 0; s < perBlock; s++) {
+      for (let c = 0; c < 4; c++) payload.push((((s * 0x9E3779B1) ^ (c * 0x01010101)) >>> 0));
+    }
+    fake.chunks.push(block(0xF, 120, 1, payload));
+    const device = await VllogicDevice.open(
+      fake as unknown as USBDevice,
+      { depth: 2, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+    );
+    const store = new PlanarSampleStore({ channelCount: 4, samplerate: 10e6 });
+    let ended = false;
+    const requested = 30 * 32 + 17;
+    const aligned = 30 * 32;
+    await device.startChannelMajor(
+      { channels: 4, samplerate: 10e6, thresholdVolts: 1.65 },
+      {
+        begin: (channels) => store.beginFrame(channels),
+        channel: (channel, start, words) => store.appendChannel(channel, start, words),
+        commit: (samples) => store.commitSamples(samples),
+      },
+      undefined,
+      { deviceSampleLimit: requested, onEnd: () => { ended = true; } },
+    );
+    for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+    await device.stop();
+    const evenBits = (word: number): number => {
+      let out = 0;
+      for (let bit = 0; bit < 32; bit += 2) out |= ((word >>> bit) & 1) << (bit / 2);
+      return out >>> 0;
+    };
+    let contiguous = true;
+    for (let i = 0; i < 30 && contiguous; i++) {
+      for (let c = 0; c < 4; c++) {
+        // The connector permutation swaps each low pair: logical c reads physical c^1.
+        const wire = c ^ 1;
+        const expected = (evenBits(payload[(2 * i) * 4 + wire]!) |
+          (evenBits(payload[(2 * i + 1) * 4 + wire]!) << 16)) >>> 0;
+        for (let k = 0; k < 32; k++) {
+          if (store.sampleAt(c, i * 32 + k) !== ((expected >>> k) & 1)) {
+            contiguous = false;
+            break;
+          }
+        }
+      }
+    }
+    check(
+      'a decimated tail keeps contiguous samples and lands exactly on the budget',
+      ended && store.length === aligned && contiguous,
+      `ended=${ended} length=${store.length} aligned=${aligned} contiguous=${contiguous}`,
     );
   }
 
@@ -527,6 +665,41 @@ async function main(): Promise<void> {
     const code = (error as { code?: string } | null)?.code ?? 'none';
     check(
       'a first block with the wrong divider is rejected',
+      code === 'device.headerMismatch',
+      `code=${code}`,
+    );
+  }
+
+  {
+    // Same path, but only `capturing` is wrong: the board is not actually streaming.
+    const fake = new FakeUsb();
+    const payload: number[] = [];
+    for (let s = 0; s < 30; s++) {
+      for (let c = 0; c < 4; c++) payload.push(((s * 0x9E3779B1) ^ c) >>> 0);
+    }
+    fake.chunks.push(block(0xF, 120, 1, payload, false, false, false));
+    const device = await VllogicDevice.open(
+      fake as unknown as USBDevice,
+      { depth: 2, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+    );
+    const store = new PlanarSampleStore({ channelCount: 4, samplerate: 20e6 });
+    let error: unknown = null;
+    device.onError = (e) => { error = e; };
+    await device.startChannelMajor(
+      { channels: 4, samplerate: 20e6, thresholdVolts: 1.65 },
+      {
+        begin: (chs) => store.beginFrame(chs),
+        channel: (ch, start, words) => store.appendChannel(ch, start, words),
+        commit: (samples) => store.commitSamples(samples),
+      },
+      undefined,
+      { deviceSampleLimit: 30 * 32 },
+    );
+    for (let i = 0; i < 50 && error === null; i++) await new Promise((r) => setTimeout(r, 10));
+    await device.stop();
+    const code = (error as { code?: string } | null)?.code ?? 'none';
+    check(
+      'a first block that is not capturing is rejected',
       code === 'device.headerMismatch',
       `code=${code}`,
     );

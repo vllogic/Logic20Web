@@ -275,9 +275,7 @@ async function runCase(bench: BenchCase): Promise<BenchResult> {
       parser: device.parserStats ? { ...device.parserStats } : null,
     };
   } finally {
-    await device.stop().catch(() => undefined);
-    device.terminate();
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await device.release();
   }
 }
 

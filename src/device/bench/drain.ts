@@ -19,7 +19,6 @@ import { CHANNEL_COUNTS, isChannelCount, type ChannelCount } from '../../types.j
 const VLLOGIC_VID = 0x1209;
 const VLLOGIC_PID = 0x6688;
 const CAPTURE_TIMEOUT_MS = 20_000;
-const CLOSE_SETTLE_MS = 700;
 
 interface CycleResult {
   cycle: number;
@@ -319,8 +318,7 @@ async function runCycle(cycle: number): Promise<CycleResult> {
       partialSnapshots: device.parserStats.partialSnapshots,
     }
     : null;
-  device.terminate();
-  await delay(CLOSE_SETTLE_MS);
+  await device.release();
 
   base.ended = ended;
   base.error = failure;
