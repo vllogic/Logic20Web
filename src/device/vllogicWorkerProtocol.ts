@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 vllogic.com
+/**
+ * Messages between the page and the thread that owns a Logic20.
+ *
+ * The split is the same one libsigrok makes: the read loop reaps and resubmits transfers
+ * on a thread whose only job is that callback, while the page draws, allocates and
+ * collects garbage. WebUSB cannot cancel a transferIn, so a page-side read loop is only
+ * as punctual as the page thread; at 320 MB/s a 30 ms GC pause overflows the board FIFO
+ * even with 16 MiB of reads queued.
+ *
+ * `batch` carries channel-major words, already coalesced to a display cadence in the
+ * worker. The buffers are transferred, not copied, and the page writes them straight
+ * into its planar store.
+ */
+
+import type { CaptureConfig } from './types.js';
+import type { VllogicReadTuning } from './vllogic.js';
+import type { DiagnosticVars } from '../diagnostics.js';
+
+export interface VllogicDeviceFilter {
+  vendorId: number;
+  productId: number;
+  serial?: string;
+}
+
+export type VllogicToWorker =
+  | { kind: 'open'; filter: VllogicDeviceFilter; tuning: VllogicReadTuning }
+  | { kind: 'start'; cfg: CaptureConfig; deviceSampleLimit: number }
+  | { kind: 'stop' }
+  | { kind: 'terminate' };
+
+/** One coalesced channel-major frame: `words[i]` belongs to `channels[i]`. */
+export interface VllogicBatchMessage {
+  kind: 'batch';
+  channels: number[];
+  startSample: number;
+  /** One buffer per channel, each 32 samples per word, bit 0 first. */
+  words: ArrayBuffer[];
+  samples: number;
+}
+
+export type VllogicFromWorker =
+  | { kind: 'opened'; name: string; serial: string }
+  | { kind: 'started' }
+  | VllogicBatchMessage
+  | { kind: 'dropout'; position: number; missing: number }
+  | { kind: 'ended' }
+  | { kind: 'stopped' }
+  | {
+      kind: 'error';
+      message: string;
+      code?: string;
+      vars?: DiagnosticVars;
+      payload?: string;
+    };

@@ -6,7 +6,7 @@ import { DiagnosticError } from '../diagnostics.js';
 import { PID_SLOGIC16_U3, PID_SLOGIC32_U3, USB_VID_SIPEED } from './protocol.js';
 import { USB_FILTERS } from './usbCore.js';
 import { workerTransport } from './workerTransport.js';
-import { VllogicDevice } from './vllogic.js';
+import { vllogicWorkerTransport } from './workerVllogicDevice.js';
 import { VLLOGIC_PID, VLLOGIC_VID } from './vllogicProtocol.js';
 
 export type {
@@ -51,6 +51,7 @@ export {
 } from './simDriver.js';
 export { WorkerSlogicDevice, workerTransport } from './workerTransport.js';
 export { VllogicDevice } from './vllogic.js';
+export { WorkerVllogicDevice, vllogicWorkerTransport } from './workerVllogicDevice.js';
 
 /**
  * Open the device the origin already has permission for, on the worker when it can and
@@ -64,7 +65,7 @@ function isSupportedUsbDevice(device: USBDevice): boolean {
 
 async function openSupportedDevice(usb: USBDevice): Promise<Device> {
   if (usb.vendorId === VLLOGIC_VID && usb.productId === VLLOGIC_PID) {
-    return VllogicDevice.open(usb);
+    return vllogicWorkerTransport.open(usb);
   }
   return workerTransport.open(usb);
 }

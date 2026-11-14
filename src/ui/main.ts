@@ -16,6 +16,7 @@ import { initTooltip } from './tooltip.js';
 // Side effect: hands `workerTransport` the browser's USB worker constructor. Imported
 // here, not from `device/index.ts`, so the device layer stays bundlable without Vite.
 import '../device/usbWorkerSpawn.js';
+import '../device/vllogicWorkerSpawn.js';
 
 declare global {
   interface Window { slogicweb?: App }
