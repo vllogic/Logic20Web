@@ -194,6 +194,7 @@ class Cycle:
     last_data_seq: int | None = None
     first_data_drop: int | None = None
     last_data_drop: int | None = None
+    read_lengths: list[int] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def first_data_seq(self) -> int | None:
@@ -227,6 +228,13 @@ class Cycle:
                 'bytes': self.capture_bytes,
                 **summarize(self.capture_blocks),
                 'seqs': [b.seq for b in self.capture_blocks if b.kind == 'data'][:8],
+            },
+            'readLengths': {
+                'count': len(self.read_lengths),
+                'min': min(self.read_lengths) if self.read_lengths else 0,
+                'avg': round(sum(self.read_lengths) / len(self.read_lengths))
+                if self.read_lengths else 0,
+                'max': max(self.read_lengths) if self.read_lengths else 0,
             },
             'postStop': {
                 'bytes': self.post_stop_bytes,
@@ -403,6 +411,7 @@ class Probe:
             buf = self.read(200)
             if buf is None:
                 continue
+            cycle.read_lengths.append(len(buf))
             cycle.capture_bytes += len(buf)
             blocks = parse_blocks(buf)
             cycle.capture_blocks.extend(blocks)

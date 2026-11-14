@@ -58,7 +58,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 1. 设备：20 lane，每 lane 每 word 32 samples；一个 snapshot = `nchan` words = 32 个采样时刻。
 2. UHSIF 块：16 B 头 + `payload_len` 个 **32-bit 字**（不是字节！范围 120..4092），总线上一块 16 KiB。
 3. `vllogic.ts`：
-   - 保持 `depth` 条 `transferIn` 同时在飞（默认 32，单次请求 256 KiB；设备实际每 16 KiB 完成一次短读，所以真实缓冲是 `depth × 16 KiB` ≈ 512 KiB）。
+   - 保持 `depth` 条 `transferIn` 同时在飞（默认 32，单次请求 256 KiB；Chromium/Linux 实测每次完成约 230–256 KiB，32 条约 8 MiB 请求窗口。16 KiB 是 UHSIF 块粒度，不是完成长度）。
    - 完成回调**先补发**下一条读，再交给消费者；按提交序号严格排序消费。
    - 达到 `deviceSampleLimit` 立即 `onEnd`，不等被 Stop 的读队列排空。
    - 首块校验：`div / mask / mode / capturing` 与配置不符直接报 `device.headerMismatch`（ACK 不参与）。
@@ -103,7 +103,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 关键坑：
 
 - **`payload_len` 是 dwords**，不是字节。见 `uhsif_rx.c:767/841/928-933`、`uhsif.v`。
-- 设备每 16 KiB 完成一次读；请求 256 KiB 不会真的攒满 256 KiB。`depth × 16 KiB` 才是实际在飞窗口。
+- 原生 libsigrok 的 URB 以 16 KiB 短包完成；但 Chromium/Linux 的 WebUSB `transferIn(256 KiB)` 实测每次完成约 230–256 KiB（278 次读 ~64 MB），所以 `depth × 256 KiB` 才是请求窗口，`depth` 提供的是主机侧缓冲时间（32 × 256 KiB ≈ 25 ms @ 320 MB/s）。
 - Chrome 的 bcdDevice 拆分与 Windows 显示不一致，不要只按 `0x0820` 拒绝。
 - WebUSB 的 `transferIn` 无法取消：用空闲探测 + 预 arm 排空（`?vllogic-drain`，默认 20 ms）；只靠 STOP+FLUSH 不够，停止时仍有尾部在飞。
 - 高带宽（16CH@160MHz）主机落后时，STOP 后设备仍会完成已排队的尾部数据（实测约 128 KiB，`capturing=1`）。这是**本次采集的尾巴**，不是旧数据；readLoop 会在 750 ms settle 内消费，`captureEpoch` 防止旧循环越代写入。
