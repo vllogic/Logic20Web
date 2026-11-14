@@ -37,7 +37,10 @@ interface CycleResult {
   };
   firstBlockMs: number | null;
   runMs: number;
-  longTasks: { count: number; maxMs: number; inCaptureMs: number };
+  longTasks: {
+    count: number; maxMs: number; inCaptureMs: number;
+    frameMaxMs: number; frameSlow: number;
+  };
   storeLength: number;
   effMSa: number;
   lineMBs: number;
@@ -117,7 +120,7 @@ function row(result: CycleResult): HTMLTableRowElement {
     result.effMSa.toFixed(2),
     result.lineMBs.toFixed(1),
     String(result.longTasks.count),
-    result.longTasks.maxMs.toFixed(1),
+    `${result.longTasks.maxMs.toFixed(1)} / ${result.longTasks.frameMaxMs.toFixed(1)}`,
     String(result.parser?.acks ?? '—'),
     String(result.parser?.crcFail ?? '—'),
     String(result.parser?.maskMismatch ?? '—'),
@@ -155,7 +158,7 @@ async function runCycle(cycle: number): Promise<CycleResult> {
     configMs: 0,
     drain: { enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0 },
     firstBlockMs: null, runMs: 0,
-    longTasks: { count: 0, maxMs: 0, inCaptureMs: 0 },
+    longTasks: { count: 0, maxMs: 0, inCaptureMs: 0, frameMaxMs: 0, frameSlow: 0 },
     storeLength: 0, effMSa: 0, lineMBs: 0,
     transfers: 0, shortReads: 0, peakInFlight: 0, stopMs: 0, parser: null,
     ended: false, error: null,
@@ -209,6 +212,23 @@ async function runCycle(cycle: number): Promise<CycleResult> {
     longTaskObserver = null;
   }
 
+  // longtask only reports > 50 ms; the in-flight window is ~25 ms, so also watch the
+  // animation-frame cadence for the 10-30 ms stalls that longtask never sees.
+  let frameMax = 0;
+  let frameSlow = 0;
+  let rafId = 0;
+  let lastFrame = 0;
+  const frameLoop = (now: number): void => {
+    if (lastFrame > 0) {
+      const gap = now - lastFrame;
+      if (gap > frameMax) frameMax = gap;
+      if (gap > 20) frameSlow += 1;
+    }
+    lastFrame = now;
+    rafId = requestAnimationFrame(frameLoop);
+  };
+  rafId = requestAnimationFrame(frameLoop);
+
   const startedAt = performance.now();
   try {
     await device.startChannelMajor(
@@ -244,6 +264,8 @@ async function runCycle(cycle: number): Promise<CycleResult> {
       count: inside.length,
       maxMs: Number(Math.max(0, ...inside.map((t) => t.ms)).toFixed(1)),
       inCaptureMs: Number(inside.reduce((sum, t) => sum + t.ms, 0).toFixed(1)),
+      frameMaxMs: Number(frameMax.toFixed(1)),
+      frameSlow,
     };
   } catch (e) {
     failure = errorText(e);
@@ -256,6 +278,7 @@ async function runCycle(cycle: number): Promise<CycleResult> {
     failure ??= errorText(e);
   }
   longTaskObserver?.disconnect();
+  if (rafId !== 0) cancelAnimationFrame(rafId);
   base.stopMs = performance.now() - stopStart;
   // The parser counters are final only after stop() joined the read loop.
   const dataSec = Math.max(0.001,
@@ -314,7 +337,7 @@ runButton.addEventListener('click', async () => {
         drainIdleMs: Number(drainInput.value), configMs: 0,
         drain: { enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0 },
         firstBlockMs: null, runMs: 0,
-    longTasks: { count: 0, maxMs: 0, inCaptureMs: 0 },
+    longTasks: { count: 0, maxMs: 0, inCaptureMs: 0, frameMaxMs: 0, frameSlow: 0 },
     storeLength: 0, effMSa: 0, lineMBs: 0,
         transfers: 0, shortReads: 0, peakInFlight: 0, stopMs: 0, parser: null,
         ended: false, error: errorText(e),
