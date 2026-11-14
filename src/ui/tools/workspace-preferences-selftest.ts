@@ -1712,7 +1712,7 @@ const widthWiring = app.includes('private widthExplicit = false;') &&
   widthSetterBody.includes('this.applySettings({ ...this.settings, channels });') &&
   !widthSetterBody.includes('enabled = i < channels') &&
   !app.includes('neededWidth(') &&
-  app.includes('const width = this.widthExplicit && this.settings.channels < max ? this.settings.channels : max;') &&
+  app.includes('const width = device.sampleLayout === \'channel-major\'\n      ? max\n      : this.widthExplicit && this.settings.channels < max ? this.settings.channels : max;') &&
   snapshotBody.includes('channels: this.settings.channels,') &&
   snapshotBody.includes('widthExplicit: this.widthExplicit,') &&
   afterMaskBody.length > 0 && !afterMaskBody.includes('channels:') && !afterMaskBody.includes('neededWidth');

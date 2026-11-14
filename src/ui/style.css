@@ -1880,6 +1880,23 @@ html.resizing { cursor: col-resize; user-select: none; }
 }
 .analog-button.on { background: #4C9AFF; color: #141415; }
 .analog-button:disabled { cursor: default; opacity: .45; }
+/* Row select-all/none: same geometry in every locale and for the 4-lane row, so the
+   button never changes width with its label. */
+.bank-select {
+  flex: 0 0 64px; width: 64px; min-width: 64px; max-width: 64px;
+  height: 22px; padding: 0 4px; cursor: pointer; overflow: hidden;
+  background: var(--bg20); color: var(--text); border: 1px solid var(--border-low);
+  border-radius: 3px; font: inherit; font-size: 10px; white-space: nowrap;
+  text-align: center; text-overflow: clip;
+}
+.bank-select:hover:not(:disabled) { border-color: #4C9AFF; color: #4C9AFF; }
+.bank-select:disabled { cursor: default; opacity: .45; }
+:is(html[data-theme="dark"], html[data-theme="light"]) .bank-select {
+  background: var(--background); border-color: var(--input);
+}
+:is(html[data-theme="dark"], html[data-theme="light"]) .bank-select:hover:not(:disabled) {
+  border-color: #4C9AFF; color: #4C9AFF;
+}
 .analog-cell {
   flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px;
   height: 22px; padding: 0 2px 0 8px; border-radius: 3px;

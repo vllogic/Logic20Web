@@ -358,11 +358,11 @@ function mediaOverrides(selector: string, prop: string): string[] {
 }
 
 {
-  const tip = panel.includes("chip.title = t('capturePanel.chipToggle', { id });") &&
+  const tip = panel.includes("chip.title = t(v.laneSelect ? 'capturePanel.chipSelect' : 'capturePanel.chipToggle', { id });") &&
     panel.includes("chip.setAttribute('aria-label', chip.title);");
   const hidden = base('.channel-bank-grid .chip:not(.on)', 'border-style') === 'dashed' &&
     base('.channel-bank-grid .chip:not(.on)', 'text-decoration') === 'line-through';
-  check('capture-panel chips say they show/hide (not acquire) and a hidden chip looks hidden',
+  check('capture-panel chips say select on the Logic20 and show/hide elsewhere',
     tip && hidden, `tip=${tip}, hidden=${hidden}`);
 }
 

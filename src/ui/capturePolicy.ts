@@ -2,13 +2,15 @@
 
 import { MAX_SAMPLES } from './captureIO.js';
 import { clampCaptureSeconds } from './captureTime.js';
-import { bytesPerSampleForChannels, type ChannelCount } from '../types.js';
+import { bytesPerSampleForChannels } from '../types.js';
 import {
   CAPTURE_MEMORY_WARN_FRACTION, clampLoopSamples, maxCaptureSamples, type CaptureSettings,
 } from './state.js';
 
-export function capturePostTriggerSamples(settings: CaptureSettings): number {
-  if (settings.mode === 'loop') return clampLoopSamples(settings.loopSamples, settings.channels);
+export function capturePostTriggerSamples(
+  settings: CaptureSettings, channels: number = settings.channels,
+): number {
+  if (settings.mode === 'loop') return clampLoopSamples(settings.loopSamples, channels);
   const seconds = clampCaptureSeconds(settings.seconds, settings.samplerate);
   return Math.min(MAX_SAMPLES - 1, Math.max(1, Math.round(seconds * settings.samplerate)));
 }
@@ -26,7 +28,7 @@ export function capturePostTriggerSamples(settings: CaptureSettings): number {
  * duration; that limit is honest and shown in the panel.
  */
 export function carryCaptureDuration(
-  previous: CaptureSettings, next: CaptureSettings,
+  previous: CaptureSettings, next: CaptureSettings, channels: number = next.channels,
 ): CaptureSettings {
   if (next.mode === 'loop') {
     let loopSamples = next.loopSamples;
@@ -34,27 +36,27 @@ export function carryCaptureDuration(
       // A caller that changed the window explicitly keeps it; a bare mode switch carries
       // the duration the other modes were using.
       if (next.loopSamples === previous.loopSamples) {
-        loopSamples = clampLoopSamples(Math.round(previous.seconds * next.samplerate), next.channels);
+        loopSamples = clampLoopSamples(Math.round(previous.seconds * next.samplerate), channels);
       }
     } else if (next.samplerate !== previous.samplerate && next.loopSamples === previous.loopSamples) {
       loopSamples = clampLoopSamples(
-        Math.round(previous.loopSamples / previous.samplerate * next.samplerate), next.channels);
+        Math.round(previous.loopSamples / previous.samplerate * next.samplerate), channels);
     }
-    loopSamples = clampLoopSamples(loopSamples, next.channels);
+    loopSamples = clampLoopSamples(loopSamples, channels);
     return {
       ...next,
       loopSamples,
       // The window may be shorter than Single's 1 ms control minimum; this field carries
       // the duration across a switch, and the clamp happens when leaving Loop.
       seconds: loopDurationSeconds(
-        [next.seconds, previous.seconds], loopSamples, next.samplerate, next.channels),
+        [next.seconds, previous.seconds], loopSamples, next.samplerate, channels),
     };
   }
   if (previous.mode === 'loop') {
     return {
       ...next,
       seconds: clampCaptureSeconds(loopDurationSeconds(
-        [previous.seconds], previous.loopSamples, previous.samplerate, previous.channels,
+        [previous.seconds], previous.loopSamples, previous.samplerate, channels,
       ), next.samplerate),
     };
   }
@@ -71,7 +73,7 @@ export function carryCaptureDuration(
  */
 export function loopDurationSeconds(
   candidates: readonly number[], loopSamples: number, samplerate: number,
-  channels: CaptureSettings['channels'],
+  channels: number,
 ): number {
   for (const seconds of candidates) {
     if (Number.isFinite(seconds) && seconds > 0 &&
@@ -89,7 +91,7 @@ export function loopDurationSeconds(
  * it is a typed 'memory' abort rather than "Completed".
  */
 export function captureStoreBudget(
-  requestedSamples: number, channels: ChannelCount,
+  requestedSamples: number, channels: number,
 ): { samples: number; memoryBound: boolean } {
   const cap = maxCaptureSamples(channels);
   return requestedSamples > cap
@@ -108,7 +110,7 @@ export interface CaptureMemoryReadout {
 
 /** The ceiling readout for a cut request: the ceiling, and "about x s left" at the rate. */
 export function captureMemoryReadout(
-  keptSamples: number, channels: ChannelCount, samplerate: number,
+  keptSamples: number, channels: number, samplerate: number,
 ): CaptureMemoryReadout {
   const capSamples = maxCaptureSamples(channels);
   const left = Math.max(0, capSamples - Math.max(0, keptSamples));

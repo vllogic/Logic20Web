@@ -145,10 +145,10 @@ const base = defaultCaptureSettings();
   const applyStart = app.indexOf('private applySettings(s: CaptureSettings): void {');
   const applyEnd = applyStart >= 0 ? app.indexOf('\n  }', applyStart) : -1;
   const apply = applyEnd > applyStart ? app.slice(applyStart, applyEnd) : '';
-  const wired = apply.includes('carryCaptureDuration(this.settings, this.clampSettings(s))');
+  const wired = apply.includes('carryCaptureDuration(this.settings, this.clampSettings(s), this.memoryChannelCount())');
   const derived = app.includes(
-    'seconds: s.mode === \'loop\'\n      ? loopDurationSeconds([s.seconds], loopSamples, samplerate, s.channels)');
-  const adopted = app.includes('carryCaptureDuration(this.settings, adopted)');
+    'seconds: s.mode === \'loop\'\n      ? loopDurationSeconds([s.seconds], loopSamples, samplerate, memoryChannels)');
+  const adopted = app.includes('carryCaptureDuration(this.settings, adopted, this.memoryChannelCount())');
   check('App carries the duration through its single settings commit path and device adoption',
     wired && derived && adopted, `apply=${wired}, derive=${derived}, adopt=${adopted}`);
 }

@@ -345,7 +345,7 @@ function toggle(
     sinkStart > 0 && !sink.includes("stopCapture('completed')") &&
       (sink.match(/this\.captureFilled\(\)/g) ?? []).length >= 4 &&
       (sink.match(/this\.captureOutOfMemory\(e\)/g) ?? []).length === 3 &&
-      app.includes('this.applyCaptureMemoryCeiling(isLoop, cfg.channels);') &&
+      app.includes('this.applyCaptureMemoryCeiling(isLoop, activeChannels);') &&
       app.includes("cause: 'memory',"),
     `filled=${(sink.match(/this\.captureFilled\(\)/g) ?? []).length}`);
   check('both save paths stream bounded parts with progress and the typed failure notice',

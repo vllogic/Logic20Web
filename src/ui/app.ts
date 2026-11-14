@@ -15,7 +15,7 @@ import {
 } from '../data/index.js';
 import { DROP_FRONT_QUANTUM, type SampleStore } from '../data/types.js';
 import {
-  bytesPerSampleForChannels, channelWidthForProbes, isChannelCount, type ChannelCount,
+  bytesPerSampleForChannels, channelWidthForProbes, isChannelCount,
 } from '../types.js';
 import { ChannelMajorCoalescer, displayBatchSamples } from '../data/channelMajorCoalescer.js';
 import { DiagnosticError, diagnosticOf } from '../diagnostics.js';
@@ -171,6 +171,9 @@ import {
   captureMemoryReadout, capturePostTriggerSamples, captureStoreBudget, carryCaptureDuration,
   loopDurationSeconds,
 } from './capturePolicy.js';
+import {
+  VLLOGIC_FIFO_HARD_MBPS, VLLOGIC_LINK_MBPS, selectionBandwidthMbps, trimChannelSelection,
+} from './channelBandwidth.js';
 import {
   captureStartHoldDue, emptyHintVisible, planCaptureStartDisplay,
 } from './captureStart.js';
@@ -482,8 +485,22 @@ export class App {
   private loopLastAnchorStep = 0;
   /** Capture shape of the last wave, to keep a Repeat session's layout off the wave path. */
   private lastCaptureChannels = 0;
+  private lastCaptureActiveChannels = 0;
   private lastCaptureRate = 0;
   private lastCaptureTestMode = 0;
+  /** Selection a Repeat wave must keep to reuse the previous layout. */
+  private lastCaptureSelectionKey = '';
+  /**
+   * Logic20 selection order: channels selected by the same row action share one clock
+   * value, so the bandwidth trim can close the older picks first and break ties by the
+   * higher channel number. Not persisted; a restored selection starts at 0.
+   */
+  private channelSelectedAt = new Map<number, number>();
+  private channelSelectClock = 0;
+  /** The last forced close, shown under the channel rows until the next edit. */
+  private bandwidthNotice: {
+    closed: readonly number[]; bandwidthMbps: number; limitMbps: number;
+  } | null = null;
   private rateCeilings: Readonly<Record<number, number>> = MAX_SAMPLERATE_HZ;
   /** The board's per-width default rates (`Device.recommendedSamplerateHz`). */
   private rateRecommendations: Readonly<Record<number, number>> = {};
@@ -753,6 +770,7 @@ export class App {
       .map((bus) => applyBusBitOrder(bus, this.settings.testMode));
     this.busViews = this.busViews.filter((bus) => !busOutOfWidth(bus.spec, this.displayChannelCount()));
     this.syncBankChannels();
+    this.resetChannelSelectionTimes();
     this.sidebar = {
       visible: workspace?.sidebar?.visible !== false,
       page: workspace?.sidebar?.page ?? 'capture',
@@ -908,6 +926,161 @@ export class App {
     return this.order.map((i) => this.channels[i]!).filter((c) => this.channelAvailable(c.index) && c.enabled);
   }
 
+  /** True when the connected transport is the Logic20 (fixed 20-lane, arbitrary subset). */
+  private isLaneSelectDevice(): boolean {
+    return this.device?.sampleLayout === 'channel-major';
+  }
+
+  private resetChannelSelectionTimes(): void {
+    this.channelSelectedAt.clear();
+    this.channelSelectClock = 0;
+    for (const channel of this.channels) {
+      if (channel.enabled) this.channelSelectedAt.set(channel.index, 0);
+    }
+  }
+
+  private markChannelSelected(channel: number, at?: number): void {
+    this.channelSelectedAt.set(channel, at ?? ++this.channelSelectClock);
+  }
+
+  private selectedChannelEntries(): Array<{ channel: number; selectedAt: number }> {
+    return this.channels
+      .filter((channel) => channel.enabled && channel.index < this.renderChannelCount())
+      .map((channel) => ({
+        channel: channel.index,
+        selectedAt: this.channelSelectedAt.get(channel.index) ?? 0,
+      }));
+  }
+
+  /** The pending capture's logical lanes, ascending (the wire set). */
+  private selectedChannels(): number[] {
+    return this.selectedChannelEntries().map((entry) => entry.channel).sort((a, b) => a - b);
+  }
+
+  private selectedChannelCount(): number {
+    return this.selectedChannelEntries().length;
+  }
+
+  /** Lanes the memory ceiling, loop window and progress bytes should count. */
+  private memoryChannelCount(): number {
+    return this.isLaneSelectDevice()
+      ? Math.max(1, this.selectedChannelCount())
+      : this.settings.channels;
+  }
+
+  /**
+   * Channels referenced by a trigger, bus or decoder. The hard-limit trim closes these
+   * last, but still closes them when the unprotected lanes alone cannot fit.
+   */
+  private referencedChannels(): Set<number> {
+    const referenced = new Set<number>();
+    if (this.settings.triggerEnableMask) {
+      for (const condition of this.settings.triggerConditions) referenced.add(condition.channel);
+    }
+    for (const bus of this.busViews) {
+      for (const channel of bus.spec.bits) referenced.add(channel);
+      if (bus.spec.clock != null) referenced.add(bus.spec.clock.channel);
+    }
+    for (const analyzer of this.analyzers) {
+      referenced.add(analyzer.laneChannel);
+      for (const channel of Object.values(analyzer.channels)) {
+        if (channel >= 0) referenced.add(channel);
+      }
+    }
+    return referenced;
+  }
+
+  /**
+   * Apply the Logic20 4500 Mbit/s hard limit to the pending selection. Closes the oldest
+   * unprotected channels first (same-time ties break on the higher D number) until the
+   * set fits, then drops every trigger/bus/decoder reference to the closed lanes.
+   */
+  private enforceChannelBandwidth(): void {
+    this.bandwidthNotice = null;
+    if (!this.isLaneSelectDevice() || this.loadedCapture()) return;
+    const selected = this.selectedChannelEntries();
+    if (selected.length === 0) return;
+    const trim = trimChannelSelection({
+      selected,
+      rateHz: this.settings.samplerate,
+      protectedChannels: this.referencedChannels(),
+    });
+    if (trim.closed.length === 0) return;
+    for (const channel of trim.closed) {
+      const state = this.channels[channel];
+      if (state) state.enabled = false;
+      this.channelSelectedAt.delete(channel);
+    }
+    this.bandwidthNotice = {
+      closed: trim.closed,
+      bandwidthMbps: selectionBandwidthMbps(trim.kept.length, this.settings.samplerate),
+      limitMbps: VLLOGIC_FIFO_HARD_MBPS,
+    };
+    this.dropChannelReferences(trim.closed);
+    this.resetBusBuilds();
+    this.idleCache = null;
+  }
+
+  /** Remove trigger, bus and decoder references to lanes the limit just closed. */
+  private dropChannelReferences(closed: readonly number[]): void {
+    if (closed.length === 0) return;
+    const gone = new Set(closed);
+    const triggerModes = { ...this.settings.triggerModes };
+    let triggerChanged = false;
+    for (const channel of closed) {
+      if (channel in triggerModes) {
+        delete triggerModes[channel];
+        triggerChanged = true;
+      }
+    }
+    const triggerConditions = modesToConditions(triggerModes)
+      .filter((condition) => !gone.has(condition.channel));
+    if (triggerConditions.length !== this.settings.triggerConditions.length) triggerChanged = true;
+    if (triggerChanged) {
+      this.settings = {
+        ...this.settings,
+        triggerModes,
+        triggerConditions,
+        triggerChannel: triggerConditions[0]?.channel ?? this.settings.triggerChannel,
+        triggerKind: triggerConditions[0]?.kind ?? this.settings.triggerKind,
+        triggerLevel: triggerConditions[0]?.level ?? this.settings.triggerLevel,
+        ...(triggerConditions.length === 0 ? { triggerEnableMask: false } : {}),
+      };
+    }
+    this.busViews = this.busViews.filter((bus) =>
+      ![...bus.spec.bits, ...(bus.spec.clock != null ? [bus.spec.clock.channel] : [])]
+        .some((channel) => gone.has(channel)));
+    const kept = this.channels.filter((channel) => !gone.has(channel.index) && channel.enabled)
+      .map((channel) => channel.index);
+    const fallback = kept[0] ?? 0;
+    for (const analyzer of this.analyzers) {
+      for (const [decoderChannel, captureChannel] of Object.entries(analyzer.channels)) {
+        if (captureChannel >= 0 && gone.has(captureChannel)) analyzer.channels[Number(decoderChannel)] = -1;
+      }
+      if (gone.has(analyzer.laneChannel)) analyzer.laneChannel = fallback;
+    }
+    this.discardDecodeState();
+  }
+
+  private setChannelBankSelected(start: number, select: boolean): void {
+    const channels = this.channels.slice(start, start + CHANNEL_BANK_SIZE)
+      .filter((channel) => channel.index < this.renderChannelCount());
+    if (channels.length === 0) return;
+    if (!select && channels.filter((channel) => channel.enabled).length ===
+        this.selectedChannelCount()) return; // never zero selected lanes
+    const at = ++this.channelSelectClock;
+    const disabled: number[] = [];
+    for (const channel of channels) {
+      if (!select && channel.enabled && this.isLaneSelectDevice()) disabled.push(channel.index);
+      channel.enabled = select;
+      if (select) this.markChannelSelected(channel.index, at);
+      else this.channelSelectedAt.delete(channel.index);
+    }
+    if (disabled.length > 0) this.dropChannelReferences(disabled);
+    this.enforceChannelBandwidth();
+    this.afterChannelChange();
+  }
+
   /**
    * The channels the plot shows: enabled ones, minus the source bits of a bus view that
    * hides them. Display only.
@@ -958,6 +1131,7 @@ export class App {
     const idle = new Set<number>();
     if (store.length > 0) {
       for (let channel = 0; channel < store.channelCount; channel++) {
+        if (store.isChannelStored && !store.isChannelStored(channel)) continue;
         const view = store.query(channel, 0, store.length, 1);
         if (!columnHasEdge(view.low[0] ?? 0, view.high[0] ?? 0)) idle.add(channel);
       }
@@ -976,7 +1150,9 @@ export class App {
   }
 
   private captured(index: number): boolean {
-    return index < this.store.channelCount;
+    return this.store.isChannelStored
+      ? this.store.isChannelStored(index)
+      : index < this.store.channelCount;
   }
 
   private loadedCapture(): boolean {
@@ -989,6 +1165,8 @@ export class App {
    * the device alone and stay visible: they edit the next capture, not the file.
    */
   private widthTiers(): number[] {
+    // The Logic20 selects arbitrary lanes; there is no "first N channels" width.
+    if (this.isLaneSelectDevice()) return [];
     const deviceMax = this.device?.maxChannels ?? null;
     const capacity = this.loadedCapture() ? deviceMax : this.channels.length;
     return captureWidthTiers(deviceMax === null || capacity === null ? null : Math.min(deviceMax, capacity));
@@ -1019,7 +1197,7 @@ export class App {
       ? this.renderChannelCount() : s.channels;
     const clamped = clampCaptureSettings(
       s, this.rateCeilings, analogBankActive(this.busViews, s.channels), triggerChannels,
-      this.analogGains(),
+      this.analogGains(), this.memoryChannelCount(),
     );
     // Analog trigger levels belong to a displayed ADC group. Removing the group drops
     // the level (so re-adding it starts off), and its source inputs are not logic
@@ -2090,7 +2268,7 @@ export class App {
     if (s.samplerate !== this.settings.samplerate) this.samplerateExplicit = true;
     // Clamp first (the rate may hit a ceiling), then carry the duration across a mode or
     // rate change at the rate the capture will actually use.
-    const next = carryCaptureDuration(this.settings, this.clampSettings(s));
+    const next = carryCaptureDuration(this.settings, this.clampSettings(s), this.memoryChannelCount());
     if (s.samplerate !== this.settings.samplerate) {
       // The user's own pick: it supersedes the analog memory and the last note.
       this.analogRateMemory = analogRateUserEdit(this.analogRateMemory, next.samplerate);
@@ -2138,6 +2316,8 @@ export class App {
       this.resetBusBuilds();
     }
     this.settings = next;
+    this.enforceChannelBandwidth();
+    if (this.bandwidthNotice !== null) this.resetBusBuilds();
     if (triggerChanged) this.syncActiveTrigger();
     if (testModeChanged) {
       // Auto bit order follows the mode (MSB on live input, LSB on test patterns). A bus
@@ -2341,10 +2521,17 @@ export class App {
     if (!enabled && lockedChannelBanks(this.busViews, this.renderChannelCount()).has(channelBankStart(index))) return;
     if (!enabled && this.enabledChannels().length <= 1) return;   // never zero rows
     c.enabled = enabled;
+    if (enabled) this.markChannelSelected(index);
+    else {
+      this.channelSelectedAt.delete(index);
+      if (this.isLaneSelectDevice()) this.dropChannelReferences([index]);
+    }
+    this.enforceChannelBandwidth();
     this.afterChannelChange();
   }
 
   private setChannelWidth(channels: number): void {
+    if (this.isLaneSelectDevice()) return;
     // Editable while running: the new width applies to the next capture; the current
     // acquisition keeps the width (and therefore the rows) it started with.
     if (this.stopping) return;
@@ -2373,7 +2560,7 @@ export class App {
     };
     const before = analogRateBeforeClamp(this.analogRateMemory, transition);
     const next = carryCaptureDuration(this.settings,
-      this.clampSettings({ ...this.settings, samplerate: before.rate }));
+      this.clampSettings({ ...this.settings, samplerate: before.rate }), this.memoryChannelCount());
     const after = analogRateAfterClamp(before.memory, {
       ...transition, rateAfter: next.samplerate, restoring: before.restoring,
     });
@@ -2418,7 +2605,9 @@ export class App {
     const now = performance.now();
     if (this.advanceQuickScroll(now)) this.dirty = true;
     const highRateLoop = this.running && this.captureIsLoop &&
-      this.store.samplerate * bytesPerSampleForChannels(this.store.channelCount) >= LOOP_BUILD_SUSPEND_BYTES_PER_SEC;
+      this.store.samplerate * bytesPerSampleForChannels(
+        this.store.storedChannelCount ?? this.store.channelCount,
+      ) >= LOOP_BUILD_SUSPEND_BYTES_PER_SEC;
     // Bus overviews are background work: skip them on the fastest loop streams so the
     // ingest path keeps the link, and let them finish after the capture stops.
     if (!highRateLoop) this.pumpBusBuilders();
@@ -4768,6 +4957,7 @@ export class App {
         onToggleAnalog: (start) => this.toggleAnalog(start),
         onAnalogGain: (start, gain) => this.configureAnalogGain(start, gain),
         onChannelWidth: (n) => this.setChannelWidth(n),
+        onSelectBank: (start, selected) => this.setChannelBankSelected(start, selected),
         onUsbControl: (command) => this.usbControl(command),
         onRemoveCursor: (id) => this.removeCursor(id),
         onFocusCursor: (id) => this.focusCursor(id),
@@ -4952,11 +5142,12 @@ export class App {
   private progressView(): NonNullable<CapturePanelView['progress']> {    const loop = this.captureIsLoop;
     // Acquisition progress is the current wave's, not the Repeat display composite's.
     const captured = this.captureStore;
+    const capturedChannels = captured.storedChannelCount ?? captured.channelCount;
     return {
       seconds: this.captureStart > 0 ? (performance.now() - this.captureStart) / 1000 : 0,
       samples: loop ? captured.length + this.droppedTotal : captured.length,
       bytes: loop
-        ? captured.length * bytesPerSampleForChannels(captured.channelCount)
+        ? captured.length * bytesPerSampleForChannels(capturedChannels)
         : this.captureBytes,
       lost: this.lostSamples,
       dropped: this.droppedTotal,
@@ -4970,9 +5161,8 @@ export class App {
       targetSamples: loop ? null : this.captureLimitSamples,
       // A request the ceiling cut runs into the memory ceiling: the panel shows it and the
       // time left at this rate, refreshed on the 500 ms panel clock.
-      memory: !loop && this.captureMemoryBound &&
-        isChannelCount(captured.channelCount)
-        ? captureMemoryReadout(captured.length, captured.channelCount, captured.samplerate)
+      memory: !loop && this.captureMemoryBound
+        ? captureMemoryReadout(captured.length, capturedChannels, captured.samplerate)
         : null,
     };
   }
@@ -5045,6 +5235,10 @@ export class App {
       settings: this.settings,
       channels: this.channels.slice(0, this.displayChannelCount()),
       widthOptions: this.widthTiers(),
+      laneSelect: this.isLaneSelectDevice(),
+      selectedChannelCount: this.selectedChannelCount(),
+      bandwidthNotice: this.isLaneSelectDevice() ? this.bandwidthNotice : null,
+      linkLimitMbps: this.isLaneSelectDevice() ? VLLOGIC_LINK_MBPS : undefined,
       buses: this.busViews,
       analogLevelClamped: this.analogLevelClamped,
       rateChange: this.rateChange,
@@ -5441,7 +5635,7 @@ export class App {
    * Cap a non-Loop capture's store budget at the memory ceiling for its width. Loop keeps
    * its own window budget (`maxLoopSamples`) and is untouched.
    */
-  private applyCaptureMemoryCeiling(isLoop: boolean, channels: ChannelCount): void {
+  private applyCaptureMemoryCeiling(isLoop: boolean, channels: number): void {
     if (isLoop) { this.captureMemoryBound = false; return; }
     const budget = captureStoreBudget(this.captureLimitSamples, channels);
     this.captureLimitSamples = budget.samples;
@@ -5486,7 +5680,7 @@ export class App {
     this.captureAbort = {
       cause: 'memory',
       requestedSeconds: this.captureRequestedSeconds,
-      channels: this.lastCaptureChannels,
+      channels: this.lastCaptureActiveChannels,
       samplerate: this.lastCaptureRate,
     };
   }
@@ -5496,7 +5690,7 @@ export class App {
     const abort: CaptureAbort = {
       cause: captureAbortCause(e),
       requestedSeconds: this.captureRequestedSeconds,
-      channels: this.lastCaptureChannels,
+      channels: this.lastCaptureActiveChannels,
       samplerate: this.lastCaptureRate,
     };
     this.captureAbort = abort;
@@ -6048,7 +6242,9 @@ export class App {
     if (!isChannelCount(max)) {
       throw new DiagnosticError('device.unknownWidth', { channels: max });
     }
-    const width = this.widthExplicit && this.settings.channels < max ? this.settings.channels : max;
+    const width = device.sampleLayout === 'channel-major'
+      ? max
+      : this.widthExplicit && this.settings.channels < max ? this.settings.channels : max;
     const samplerate = connectSamplerate({
       current: this.settings.samplerate,
       explicit: this.samplerateExplicit,
@@ -6086,8 +6282,12 @@ export class App {
     const adopted = this.clampSettings({
       ...this.settings, channels: width, samplerate, thresholdVolts,
     });
-    this.settings = carryCaptureDuration(this.settings, adopted);
+    this.settings = carryCaptureDuration(this.settings, adopted, this.memoryChannelCount());
     this.busViews = this.busViews.filter((bus) => !busOutOfWidth(bus.spec, this.displayChannelCount()));
+    if (device.sampleLayout === 'channel-major' && !this.loadedCapture()) {
+      this.resetChannelSelectionTimes();
+      this.enforceChannelBandwidth();
+    }
     this.reconcileEdgeChannels();
     this.persistWorkspace();
     this.relayout();
@@ -6113,10 +6313,13 @@ export class App {
       this.startMutatedCapture = false;
       const cfg: CaptureConfig = {
         channels: this.settings.channels,
+        ...(this.isLaneSelectDevice() ? { selectedChannels: this.selectedChannels() } : {}),
         samplerate: this.settings.samplerate,
         thresholdVolts: this.settings.thresholdVolts,
         testMode: this.settings.testMode,
       };
+      /** Lanes this capture actually streams: the selection, or the U3 width. */
+      const activeChannels = cfg.selectedChannels?.length ?? cfg.channels;
       // A channel-major device has a fixed rate table (divider values); snap a stored
       // rate that predates the connection to the fastest supported entry at or below it.
       if (device.sampleLayout === 'channel-major' && device.sampleratesHz?.length) {
@@ -6150,7 +6353,8 @@ export class App {
       // the screen flashes at every Capture→Stop wave.
       const quietRepeat = origin === 'repeat' && this.repeatSession && mode === 'repeat' &&
         cfg.channels === this.lastCaptureChannels && cfg.samplerate === this.lastCaptureRate &&
-        (cfg.testMode ?? 0) === this.lastCaptureTestMode;
+        (cfg.testMode ?? 0) === this.lastCaptureTestMode &&
+        (cfg.selectedChannels?.join(',') ?? '') === this.lastCaptureSelectionKey;
       const newSession = origin !== 'repeat' || this.session === null ||
         this.session.mode !== mode;
       const session = newSession || !this.session ? createSession(mode) : this.session;
@@ -6159,14 +6363,19 @@ export class App {
       this.viewIntent = false;
       if (newSession) this.repeatMissed = false;
       this.lastCaptureChannels = cfg.channels;
+      this.lastCaptureActiveChannels = activeChannels;
       this.lastCaptureRate = cfg.samplerate;
       this.lastCaptureTestMode = cfg.testMode ?? 0;
+      this.lastCaptureSelectionKey = cfg.selectedChannels?.join(',') ?? '';
       this.repeatWaveHolding = quietRepeat;
       const store = createSampleStore(
         cfg.channels,
         cfg.samplerate,
         device.sampleLayout === 'channel-major' ? 'planar' : undefined,
       );
+      // The Logic20 streams only the selected lanes; keep the unused planes empty so the
+      // capture's memory follows the selection, not the 20-lane model.
+      if (cfg.selectedChannels !== undefined) store.setActiveChannels?.(cfg.selectedChannels);
       this.waveStore = store;
       this.discardDecodeState();
       this.releaseMarkerPointer();
@@ -6215,9 +6424,9 @@ export class App {
       this.triggerViewFraction = captureLocksTriggerView(mode, softwareTrigger)
         ? triggerViewFraction(this.settings.preTriggerPercent) : 0;
       this.captureStart = softwareTrigger ? 0 : performance.now();
-      const postTriggerSamples = capturePostTriggerSamples(this.settings);
+      const postTriggerSamples = capturePostTriggerSamples(this.settings, activeChannels);
       this.captureLimitSamples = isLoop ? MAX_SAMPLES - 1 : postTriggerSamples;
-      this.applyCaptureMemoryCeiling(isLoop, cfg.channels);
+      this.applyCaptureMemoryCeiling(isLoop, activeChannels);
       this.captureRequestedSeconds = isLoop ? null : postTriggerSamples / cfg.samplerate;
       this.captureAbort = null;
       this.startMutatedCapture = true;
@@ -6251,7 +6460,7 @@ export class App {
         if (hold) this.pendingCaptureStore = store;
         else this.storeRef.set(store);
       }
-      this.captureLabel = { kind: 'capturing', channels: cfg.channels, rate: cfg.samplerate };
+      this.captureLabel = { kind: 'capturing', channels: activeChannels, rate: cfg.samplerate };
       this.setFileNotice(null);
       this.captureOrigin = { model: this.device?.name ?? null, fileName: null };
       // A quiet wave does not rebuild the panel or plot, but the trigger note must
@@ -6272,9 +6481,9 @@ export class App {
         this.setFollow(true);
       }
 
-      const bytesPerSample = bytesPerSampleForChannels(cfg.channels);
+      const bytesPerSample = bytesPerSampleForChannels(activeChannels);
       this.loopRetentionLen = isLoop
-        ? clampLoopSamples(this.settings.loopSamples, cfg.channels)
+        ? clampLoopSamples(this.settings.loopSamples, activeChannels)
         : 0;
       // A locked loop analog trigger advances its window on later crossings. Detection
       // runs on the page's raw chunks (strided, so its cost follows the rate, not the
@@ -6318,7 +6527,7 @@ export class App {
       const preTriggerSamples = softwareTrigger ? Math.min(
         Math.max(0, preTriggerBase - 1),
         Math.max(0, Math.floor(preTriggerBase * this.settings.preTriggerPercent / 100)),
-        Math.floor(MAX_SOFTWARE_TRIGGER_PREFIX_BYTES / bytesPerSampleForChannels(cfg.channels)),
+        Math.floor(MAX_SOFTWARE_TRIGGER_PREFIX_BYTES / bytesPerSampleForChannels(activeChannels)),
       ) : 0;
       if (softwareTrigger && !isLoop) {
         // Timer duration starts at the trigger sample. The store budget therefore
@@ -6326,7 +6535,7 @@ export class App {
         // In free-run mode `post` is already the store ceiling, so this clamp trims
         // the post-trigger window, not the prefix - the trigger keeps its full ring.
         this.captureLimitSamples = Math.min(MAX_SAMPLES - 1, postTriggerSamples + preTriggerSamples);
-        this.applyCaptureMemoryCeiling(isLoop, cfg.channels);
+        this.applyCaptureMemoryCeiling(isLoop, activeChannels);
       }
       // A Repeat sweep's match window is one sweep's sample budget, after the pre-fill
       // holdoff (added to the limit): a missing trigger then reports not-found, which B1 turns into a miss + next-Interval retry. Single
@@ -6699,9 +6908,9 @@ export class App {
         // allocation every few milliseconds, and the resulting GC pause is longer than
         // the USB queue covers. Reserve the whole capture before START instead.
         if (isLoop && this.loopRetentionLen > 0) {
-          store.reserveSamples?.(this.loopRetentionLen + 65_536);
+          store.reserveSamples?.(this.loopRetentionLen + 65_536, cfg.selectedChannels);
         } else if (!isLoop && this.captureLimitSamples > 0) {
-          store.reserveSamples?.(this.captureLimitSamples + 32);
+          store.reserveSamples?.(this.captureLimitSamples + 32, cfg.selectedChannels);
         }
         // Channel-major device: write each channel's words straight into its plane and
         // publish the snapshot only after every channel has arrived. The interleaved
@@ -6715,7 +6924,7 @@ export class App {
           channelStore,
           displayBatchSamples(cfg.samplerate),
           (samples) => {
-            this.captureBytes += samples * bytesPerSampleForChannels(cfg.channels);
+            this.captureBytes += samples * bytesPerSampleForChannels(activeChannels);
             this.livePending = true;
             // Loop: keep the newest `loopRetentionLen` samples. Drop in large, 512-
             // aligned blocks; translating cursors on every 8.33 ms commit would cost
@@ -7596,10 +7805,18 @@ export class App {
     const want = new Set(list.filter((i) => i >= 0 && i < this.renderChannelCount()));
     if (want.size === 0) return;   // never zero rows
     const locked = lockedChannelBanks(this.busViews, this.renderChannelCount());
+    const at = ++this.channelSelectClock;
+    const disabled: number[] = [];
     for (const c of this.channels) {
       if (c.index >= this.renderChannelCount()) continue;
-      c.enabled = want.has(c.index) || locked.has(channelBankStart(c.index));
+      const next = want.has(c.index) || locked.has(channelBankStart(c.index));
+      if (next && !c.enabled) this.markChannelSelected(c.index, at);
+      if (!next && c.enabled && this.isLaneSelectDevice()) disabled.push(c.index);
+      if (!next) this.channelSelectedAt.delete(c.index);
+      c.enabled = next;
     }
+    if (disabled.length > 0) this.dropChannelReferences(disabled);
+    this.enforceChannelBandwidth();
     this.afterChannelChange();
   }
 
@@ -7901,6 +8118,7 @@ function clampCaptureSettings(
   s: CaptureSettings, ceilings: Readonly<Record<number, number>> = MAX_SAMPLERATE_HZ,
   analog = false, triggerChannels: number = s.channels,
   analogGains: Readonly<Record<number, number>> = {},
+  memoryChannels: number = s.channels,
 ): CaptureSettings {
   const ceiling = ceilings[s.channels] ?? 200e6;
   let samplerate = Math.min(s.samplerate, ceiling);
@@ -7923,7 +8141,7 @@ function clampCaptureSettings(
   for (const c of triggerConditions) {
     triggerModes[c.channel] = triggerModeFromCondition(c);
   }
-  const loopSamples = clampLoopSamples(s.loopSamples ?? DEFAULT_LOOP_SAMPLES, s.channels);
+  const loopSamples = clampLoopSamples(s.loopSamples ?? DEFAULT_LOOP_SAMPLES, memoryChannels);
   const analogTriggers: Record<number, AnalogTriggerSetting> = {};
   for (const [key, value] of Object.entries(s.analogTriggers ?? {})) {
     const start = Number(key);
@@ -7945,7 +8163,7 @@ function clampCaptureSettings(
     // or changing the rate carries the same value (see carryCaptureDuration). The loop
     // window may be shorter than Single's 1 ms minimum, so it is not clamped here.
     seconds: s.mode === 'loop'
-      ? loopDurationSeconds([s.seconds], loopSamples, samplerate, s.channels)
+      ? loopDurationSeconds([s.seconds], loopSamples, samplerate, memoryChannels)
       : clampCaptureSeconds(s.seconds, samplerate),
     repeatIntervalSeconds: clampRepeatIntervalSeconds(s.repeatIntervalSeconds),
     loopSamples,

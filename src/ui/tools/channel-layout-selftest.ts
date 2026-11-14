@@ -831,10 +831,10 @@ expectHeight('annotation lanes cannot push a channel below the minimum', 200, 32
     startSrc.length > 0 && flagReset >= 0 && firstRefusal > flagReset && flagSet > firstRefusal,
     `slice=${startSrc.length}, reset=${flagReset}, refusal=${firstRefusal}, set=${flagSet}`);
 
-  const directMode = panel.includes('capturePostTriggerSamples(s)') && !panel.includes('s.channels === 32') &&
+  const directMode = panel.includes('capturePostTriggerSamples(s, memoryChannels)') && !panel.includes('s.channels === 32') &&
     startSrc.includes('const mode = this.settings.mode;') &&
     startSrc.includes("const isLoop = mode === 'loop'") &&
-    startSrc.includes('const postTriggerSamples = capturePostTriggerSamples(this.settings)') &&
+    startSrc.includes('const postTriggerSamples = capturePostTriggerSamples(this.settings, activeChannels)') &&
     startSrc.includes('this.captureLimitSamples = isLoop ? MAX_SAMPLES - 1 : postTriggerSamples;') &&
     startSrc.includes('this.captureRequestedSeconds = isLoop ? null : postTriggerSamples / cfg.samplerate;') &&
     !appSrc.includes('singleUnlimited') &&
@@ -860,14 +860,14 @@ expectHeight('annotation lanes cannot push a channel below the minimum', 200, 32
   const progressSplit =
     appSrc.includes('const loop = this.captureIsLoop;') &&
     appSrc.includes('samples: loop ? captured.length + this.droppedTotal : captured.length') &&
-    appSrc.includes('bytesPerSampleForChannels(captured.channelCount)');
+    appSrc.includes('bytesPerSampleForChannels(capturedChannels)');
   check('progressView splits loop totals from retained bytes',
     progressSplit,
     `total=${appSrc.includes('samples: loop ? captured.length + this.droppedTotal : captured.length')}, ` +
-    `retained=${appSrc.includes('bytesPerSampleForChannels(captured.channelCount)')}`);
+    `retained=${appSrc.includes('bytesPerSampleForChannels(capturedChannels)')}`);
   check('the panel, trigger budget and real start path share stored mode without scope ownership',
     directMode,
-    `panel=${panel.includes('capturePostTriggerSamples(s)')}, ` +
+    `panel=${panel.includes('capturePostTriggerSamples(s, memoryChannels)')}, ` +
     `start=${startSrc.includes('const mode = this.settings.mode;')}, ` +
     `scopeTransform=${appSrc.includes('effectiveCaptureMode')}`);
 
@@ -937,7 +937,7 @@ expectHeight('annotation lanes cannot push a channel below the minimum', 200, 32
   const frameEnd = frameStart >= 0 ? appSrc.indexOf('private draw(', frameStart) : -1;
   const frameSrc = frameEnd > frameStart ? appSrc.slice(frameStart, frameEnd) : '';
   const highRateGuard = frameSrc.includes('this.running && this.captureIsLoop &&') &&
-    frameSrc.includes('this.store.samplerate * bytesPerSampleForChannels(this.store.channelCount) >= LOOP_BUILD_SUSPEND_BYTES_PER_SEC');
+    frameSrc.includes('this.store.samplerate * bytesPerSampleForChannels(\n        this.store.storedChannelCount ?? this.store.channelCount,\n      ) >= LOOP_BUILD_SUSPEND_BYTES_PER_SEC');
   const throttledLive = /liveDrawDue\(\s*now,\s*this\.liveDrawAt,\s*this\.lastFrameCostMs,\s*this\.livePending,\s*this\.running\)/.test(frameSrc) &&
     frameSrc.includes('this.liveDrawAt = now;') &&
     frameSrc.includes('now - this.runningPanelAt > 500') &&

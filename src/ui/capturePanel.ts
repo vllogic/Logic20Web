@@ -59,6 +59,7 @@ import {
   triggerPanelNotes, triggerStatusNote, type PreTriggerFill, type TriggerNoteState,
 } from './triggerStatus.js';
 import { rateAdvice } from './rateAdvice.js';
+import { aboveLinkLimit, formatChannelList } from './channelBandwidth.js';
 import type { CaptureMemoryReadout } from './capturePolicy.js';
 import { rateChangeMessageKey, type RateChangeNote } from './analogRateMemory.js';
 
@@ -73,6 +74,8 @@ export interface CapturePanelCallbacks {
    */
   onAnalogGain(start: number, gain: number): void;
   onChannelWidth(channels: number): void;
+  /** Select or clear every lane in one 8-lane row (Logic20 only). */
+  onSelectBank(start: number, selected: boolean): void;
   onUsbControl(command: string): Promise<string>;
   onRemoveCursor(id: number): void;
   onFocusCursor(id: number): void;
@@ -135,6 +138,16 @@ export interface CapturePanelView {
   settings: CaptureSettings;
   channels: readonly ChannelState[];
   widthOptions: readonly number[];
+  /** Logic20: fixed D0-D19 rows, arbitrary lane selection, no width/analog controls. */
+  laneSelect?: boolean;
+  /** Lanes the pending capture will stream (the enabled rows). */
+  selectedChannelCount?: number;
+  /** The last hard-limit force-close, shown until the next channel/rate edit. */
+  bandwidthNotice?: {
+    closed: readonly number[]; bandwidthMbps: number; limitMbps: number;
+  } | null;
+  /** Logic20 USB/host advisory ceiling, Mbit/s. */
+  linkLimitMbps?: number | undefined;
   buses: readonly BusViewState[];
   /**
    * The last gain change moved a group's stored trigger level to the new range's edge
@@ -742,9 +755,9 @@ export class CapturePanel {
           const number = document.createElement('span');
           number.textContent = String(c.index);
           chip.append(prefix, number);
-          // The chip shows/hides the row only; what is acquired is the channel width.
+          // The chip selects the lane for capture; a hidden row is not streamed.
           const id = c.name === defaultChannelName(c.index) ? `D${c.index}` : `D${c.index} ${c.name}`;
-          chip.title = t('capturePanel.chipToggle', { id });
+          chip.title = t(v.laneSelect ? 'capturePanel.chipSelect' : 'capturePanel.chipToggle', { id });
           chip.setAttribute('aria-label', chip.title);
           chip.dataset.channel = String(c.index);
           chip.setAttribute('aria-pressed', String(c.enabled));
@@ -764,17 +777,36 @@ export class CapturePanel {
 
       // One button per row, always in the same place: at the right of the eight slots.
       // A partial row (4 CH) and the 16U3 still show it, disabled, so every row lines up.
-      const usable = indices.length === CHANNEL_BANK_SIZE && group < v.analogGroups;
-      const hint = analogBusy
-        ? t('capturePanel.analogBusy')
-        : active
-          ? t('capturePanel.analogDisable', { name })
-          : !usable
-            ? t(indices.length !== CHANNEL_BANK_SIZE ? 'capturePanel.analogNeedsEight'
-              : 'capturePanel.analogUnsupported')
-            : analogInputHint(start, v.channels.length);
-      bank.appendChild(analogButton(start, active, usable && !analogBusy, hint,
-        () => this.cb.onToggleAnalog(start)));
+      if (v.laneSelect) {
+        const allSelected = indices.every((index) => v.channels[index]?.enabled === true);
+        const select = document.createElement('button');
+        select.type = 'button';
+        select.className = 'bank-select';
+        select.dataset.bankSelect = String(start);
+        select.dataset.bankSelected = String(allSelected);
+        select.textContent = allSelected
+          ? t('capturePanel.selectNone') : t('capturePanel.selectAll');
+        select.title = allSelected
+          ? t('capturePanel.selectNoneHint', { range })
+          : t('capturePanel.selectAllHint', { range });
+        select.setAttribute('aria-label', select.title);
+        select.setAttribute('aria-pressed', String(allSelected));
+        select.disabled = analogBusy;
+        select.addEventListener('click', () => this.cb.onSelectBank(start, !allSelected));
+        bank.appendChild(select);
+      } else {
+        const usable = indices.length === CHANNEL_BANK_SIZE && group < v.analogGroups;
+        const hint = analogBusy
+          ? t('capturePanel.analogBusy')
+          : active
+            ? t('capturePanel.analogDisable', { name })
+            : !usable
+              ? t(indices.length !== CHANNEL_BANK_SIZE ? 'capturePanel.analogNeedsEight'
+                : 'capturePanel.analogUnsupported')
+              : analogInputHint(start, v.channels.length);
+        bank.appendChild(analogButton(start, active, usable && !analogBusy, hint,
+          () => this.cb.onToggleAnalog(start)));
+      }
       banks.appendChild(bank);
       // A rejected ratio and a clamped trigger level read under the cell they concern.
       for (const note of bankNotes.splice(0)) banks.appendChild(note);
@@ -792,6 +824,8 @@ export class CapturePanel {
 
 
     // ---- rate + threshold
+    const memoryChannels = v.laneSelect
+      ? Math.max(1, v.selectedChannelCount ?? s.channels) : s.channels;
     const rowRT = div('field-row');
     const ceiling = v.maxSamplerateHz[s.channels] ?? 200e6;
     const supported = (v.sampleratesHz ?? SAMPLERATES_HZ).filter((r) => r <= ceiling);
@@ -802,7 +836,7 @@ export class CapturePanel {
     // Rates above the profile's sustainable one for this width stay selectable, but say
     // so in the list itself, before they are picked (the warning below only follows a
     // choice). A width without a measured recommendation marks nothing.
-    const advisedHz = v.recommendedSamplerateHz?.[s.channels];
+    const advisedHz = v.laneSelect ? undefined : v.recommendedSamplerateHz?.[s.channels];
     const rateOptions = samplerateOptions(selectable, advisedHz);
     const rate = selectControl(
       'capture.sampleRate',
@@ -848,23 +882,49 @@ export class CapturePanel {
 
     // The effective rate above the profile's sustainable one for this width, whether the
     // user chose it or an analog group forced it (see rateAdvice.ts): warn, never change
-    // the channel selection behind the user's back.
-    const overAdvice = rateAdvice({
-      channels: s.channels,
-      samplerate: s.samplerate,
-      recommended: v.recommendedSamplerateHz ?? {},
-      analogMinHz: analogRates.length > 0 ? Math.min(...analogRates) : undefined,
-    });
-    if (overAdvice) {
-      const warn = div('panel-note warning');
-      warn.dataset.rateAdvice = overAdvice.key;
-      warn.textContent = t(overAdvice.key, {
+    // the channel selection behind the user's back. The Logic20 instead compares the
+    // selected-lane bit rate with the measured USB/host ceiling.
+    if (v.laneSelect) {
+      const selected = Math.max(1, v.selectedChannelCount ?? s.channels);
+      if (aboveLinkLimit(selected, s.samplerate)) {
+        const warn = div('panel-note warning');
+        warn.dataset.rateAdvice = 'capturePanel.rateAboveLink';
+        warn.textContent = t('capturePanel.rateAboveLink', {
+          channels: selected,
+          rate: formatRate(s.samplerate),
+          limit: v.linkLimitMbps ?? 2560,
+        });
+        chSec.body.appendChild(warn);
+      }
+    } else {
+      const overAdvice = rateAdvice({
         channels: s.channels,
-        rate: formatRate(s.samplerate),
-        advised: formatRate(overAdvice.advised),
-        min: formatRate(overAdvice.analogMinHz ?? overAdvice.advised),
+        samplerate: s.samplerate,
+        recommended: v.recommendedSamplerateHz ?? {},
+        analogMinHz: analogRates.length > 0 ? Math.min(...analogRates) : undefined,
       });
-      chSec.body.appendChild(warn);
+      if (overAdvice) {
+        const warn = div('panel-note warning');
+        warn.dataset.rateAdvice = overAdvice.key;
+        warn.textContent = t(overAdvice.key, {
+          channels: s.channels,
+          rate: formatRate(s.samplerate),
+          advised: formatRate(overAdvice.advised),
+          min: formatRate(overAdvice.analogMinHz ?? overAdvice.advised),
+        });
+        chSec.body.appendChild(warn);
+      }
+    }
+
+    if (v.bandwidthNotice) {
+      const forced = div('panel-note warning');
+      forced.dataset.channelForceClose = '';
+      forced.textContent = t('capturePanel.channelsForcedOff', {
+        channels: formatChannelList(v.bandwidthNotice.closed),
+        bandwidth: Math.round(v.bandwidthNotice.bandwidthMbps),
+        limit: v.bandwidthNotice.limitMbps,
+      });
+      chSec.body.appendChild(forced);
     }
 
     // A rate the app changed for the user is always announced, not only when it lands
@@ -1052,7 +1112,7 @@ export class CapturePanel {
         modeSec.body.appendChild(interval.el);
       }
     } else {
-      const maxSamples = maxLoopSamples(s.channels);
+      const maxSamples = maxLoopSamples(memoryChannels);
       const minSeconds = LOOP_WINDOW_QUANTUM / s.samplerate;
       const maxWindowSeconds = maxSamples / s.samplerate;
       const windowControl = acquisitionTimeControl({
@@ -1060,12 +1120,12 @@ export class CapturePanel {
         // Loop is a rolling single capture; its window is the capture's duration, and the
         // panel calls it that in every mode (HSync's acquisition menu does the same).
         label: t('capturePanel.duration'),
-        seconds: clampLoopSamples(s.loopSamples, s.channels) / s.samplerate,
+        seconds: clampLoopSamples(s.loopSamples, memoryChannels) / s.samplerate,
         minSeconds,
         maxSeconds: maxWindowSeconds,
         disabled: timeLocked,
         onValue: (seconds) => {
-          const samples = clampLoopSamples(Math.round(seconds * s.samplerate), s.channels);
+          const samples = clampLoopSamples(Math.round(seconds * s.samplerate), memoryChannels);
           this.cb.onSettings({ ...s, loopSamples: samples });
         },
       });
@@ -1074,8 +1134,8 @@ export class CapturePanel {
     const limit = div('panel-note');
     if (s.mode === 'loop') {
       limit.textContent = t('capturePanel.loopWindowLimit', {
-        samples: clampLoopSamples(s.loopSamples, s.channels).toLocaleString(),
-        duration: formatDuration(clampLoopSamples(s.loopSamples, s.channels) / s.samplerate),
+        samples: clampLoopSamples(s.loopSamples, memoryChannels).toLocaleString(),
+        duration: formatDuration(clampLoopSamples(s.loopSamples, memoryChannels) / s.samplerate),
         rate: formatRate(s.samplerate),
       });
     } else {
@@ -1330,7 +1390,7 @@ export class CapturePanel {
         // mode), capped by the 64 MiB retained prefix. Promising the raw percentage
         // would overstate it exactly when the cap bites (e.g. 50% of 1 s at
         // 16ch/200M is capped at ~167 ms).
-        const post = capturePostTriggerSamples(s);
+        const post = capturePostTriggerSamples(s, memoryChannels);
         // A running matcher's retained prefix was sized at start; Duration edits cannot
         // grow or shrink it, so the armed note must not claim the new setting's window.
         const requestedPre = Math.floor(post * s.preTriggerPercent / 100);
@@ -1339,7 +1399,7 @@ export class CapturePanel {
           : Math.min(
             Math.max(0, post - 1),
             Math.max(0, requestedPre),
-            Math.floor(MAX_SOFTWARE_TRIGGER_PREFIX_BYTES / bytesPerSampleForChannels(s.channels)),
+            Math.floor(MAX_SOFTWARE_TRIGGER_PREFIX_BYTES / bytesPerSampleForChannels(memoryChannels)),
           );
         const capped = preSamples < requestedPre;
         armed.textContent = capped

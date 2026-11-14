@@ -145,7 +145,7 @@ export const LOOP_WINDOW_QUANTUM = 1024;
 /** 1 s at the default 16 MHz; already a multiple of the quantum. */
 export const DEFAULT_LOOP_SAMPLES = 16_000_000;
 
-export function maxLoopSamples(channels: ChannelCount): number {
+export function maxLoopSamples(channels: number): number {
   const q = LOOP_WINDOW_QUANTUM;
   return Math.floor(Math.min(
     LOOP_RETENTION_MAX_BYTES / bytesPerSampleForChannels(channels),
@@ -162,7 +162,7 @@ export function maxLoopSamples(channels: ChannelCount): number {
  */
 export const CAPTURE_MEMORY_MAX_BYTES = LOOP_RETENTION_MAX_BYTES;
 
-export function maxCaptureSamples(channels: ChannelCount): number {
+export function maxCaptureSamples(channels: number): number {
   return Math.min(2 ** 31 - 1,
     Math.floor(CAPTURE_MEMORY_MAX_BYTES / bytesPerSampleForChannels(channels)));
 }
@@ -170,7 +170,7 @@ export function maxCaptureSamples(channels: ChannelCount): number {
 /** Within this fraction of the ceiling the panel's remaining-time readout turns warning. */
 export const CAPTURE_MEMORY_WARN_FRACTION = 0.1;
 
-export function clampLoopSamples(samples: number, channels: ChannelCount): number {
+export function clampLoopSamples(samples: number, channels: number): number {
   const q = LOOP_WINDOW_QUANTUM;
   const max = maxLoopSamples(channels);
   if (Number.isNaN(samples)) return Math.min(DEFAULT_LOOP_SAMPLES, max);
