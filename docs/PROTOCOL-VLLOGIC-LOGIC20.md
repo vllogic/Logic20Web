@@ -181,6 +181,19 @@ Vth = 2.405 - 0.0402 * pwm0 + 0.0216 * pwm1   [V]
 Endpoints: `-2.5 V` -> `pwm0 = 122`, `1.65 V` -> `pwm0 = 19`, `+5.0 V` ->
 `pwm1 = 120`.
 
+The UI offers these presets, plus a custom voltage:
+
+| Threshold | Logic family |
+| --- | --- |
+| -2.5 V | comparator endpoint |
+| -1.5 V | |
+| 0 V | |
+| 0.6 V | 1.2 V CMOS (mid-swing) |
+| 0.9 V | 1.8 V CMOS |
+| 1.65 V | 3.3 V CMOS (default) |
+| 2.5 V | 5.0 V CMOS |
+| 5 V | comparator endpoint |
+
 ## References
 
 - libsigrok driver: `libsigrok/src/hardware/vllogic-logic/`

@@ -512,7 +512,7 @@ export const ru: Messages = {
   'capturePanel.sampleRate': 'Частота выборки',
   'capturePanel.threshold': 'Порог',
   'capturePanel.thresholdVolts': '{volts} В',
-  'capturePanel.thresholdLogic': '{volts} В (логика {logic} В)',
+  'capturePanel.thresholdLogic': '{volts} В (КМОП {logic} В)',
   'capturePanel.thresholdTtl': '{volts} В (ТТЛ 5 В)',
   'capturePanel.thresholdCustom': 'Свой…',
   'capturePanel.thresholdRange': 'Введите {min}–{max} В; значение округляется до ближайшего шага, который поддерживает плата',

@@ -521,7 +521,7 @@ export const fr: Messages = {
   'capturePanel.sampleRate': 'Fréquence d’échantillonnage',
   'capturePanel.threshold': 'Seuil',
   'capturePanel.thresholdVolts': '{volts} V',
-  'capturePanel.thresholdLogic': '{volts} V (logique {logic} V)',
+  'capturePanel.thresholdLogic': '{volts} V (CMOS {logic} V)',
   'capturePanel.thresholdTtl': '{volts} V (TTL 5 V)',
   'capturePanel.thresholdCustom': 'Personnalisé…',
   'capturePanel.thresholdRange': 'Saisissez {min} à {max} V ; la valeur s’aligne sur le pas réglable le plus proche de la carte',

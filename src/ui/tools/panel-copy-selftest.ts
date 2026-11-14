@@ -29,8 +29,8 @@ const catalogs: Array<[string, Messages]> = [['en', en], ['zh-CN', zhCN], ['ru',
 {
   const labels = THRESHOLD_VOLT_OPTIONS.map((volts) => thresholdOptionLabel(volts));
   const want = [
-    '0.6 V (1.2 V logic)', '0.9 V (1.8 V logic)', '1.2 V (2.5 V logic)', '1.5 V (5 V TTL)',
-    '1.65 V (3.3 V logic)', '1.8 V', '2.5 V (5 V logic)', '3.3 V',
+    '0.6 V (1.2 V CMOS)', '0.9 V (1.8 V CMOS)', '1.2 V (2.5 V CMOS)', '1.5 V (5 V TTL)',
+    '1.65 V (3.3 V CMOS)', '1.8 V', '2.5 V (5 V CMOS)', '3.3 V',
   ];
   check('every threshold option is annotated with the logic family it suits, or left bare',
     labels.join('|') === want.join('|'), labels.join('|'));
@@ -42,8 +42,8 @@ const catalogs: Array<[string, Messages]> = [['en', en], ['zh-CN', zhCN], ['ru',
     return Math.abs(volts - family.supplyVolts / 2) > 0.06;
   });
   check('each annotation is within the family mid-swing', off.length === 0, `off=${off.join(',')}`);
-  check('the zh-CN option form is "1.65 V（3.3 V 逻辑）"',
-    zhCN['capturePanel.thresholdLogic'] === '{volts} V（{logic} V 逻辑）', zhCN['capturePanel.thresholdLogic']);
+  check('the zh-CN option form is "1.65 V（3.3 V CMOS）"',
+    zhCN['capturePanel.thresholdLogic'] === '{volts} V（{logic} V CMOS）', zhCN['capturePanel.thresholdLogic']);
 }
 
 {

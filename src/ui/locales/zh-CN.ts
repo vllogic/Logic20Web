@@ -469,7 +469,7 @@ export const zhCN: Messages = {
   'capturePanel.sampleRate': '采样率',
   'capturePanel.threshold': '阈值',
   'capturePanel.thresholdVolts': '{volts} V',
-  'capturePanel.thresholdLogic': '{volts} V（{logic} V 逻辑）',
+  'capturePanel.thresholdLogic': '{volts} V（{logic} V CMOS）',
   'capturePanel.thresholdTtl': '{volts} V（5 V TTL）',
   'capturePanel.thresholdCustom': '自定义…',
   'capturePanel.thresholdRange': '输入 {min}–{max} V；会对齐到设备可设置的最近一档',

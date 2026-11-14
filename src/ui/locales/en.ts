@@ -522,7 +522,7 @@ export const en = {
   'capturePanel.sampleRate': 'Sample rate',
   'capturePanel.threshold': 'Threshold',
   'capturePanel.thresholdVolts': '{volts} V',
-  'capturePanel.thresholdLogic': '{volts} V ({logic} V logic)',
+  'capturePanel.thresholdLogic': '{volts} V ({logic} V CMOS)',
   'capturePanel.thresholdTtl': '{volts} V (5 V TTL)',
   'capturePanel.thresholdCustom': 'Custom…',
   'capturePanel.thresholdRange': 'Enter {min}–{max} V; it snaps to the nearest step the board can set',
