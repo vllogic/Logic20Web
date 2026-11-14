@@ -135,7 +135,12 @@ jobs:
           QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
           QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
           QINIU_BUCKET: ${{ vars.QINIU_BUCKET }}
-        run: node .github/scripts/upload-qiniu.mjs "$RUNNER_TEMP/site"
+        run: |
+          if [ -z "${QINIU_ACCESS_KEY:-}" ] || [ -z "${QINIU_SECRET_KEY:-}" ] || [ -z "${QINIU_BUCKET:-}" ]; then
+            echo "::warning::Qiniu credentials are not configured; skipping the mainland mirror."
+            exit 0
+          fi
+          node .github/scripts/upload-qiniu.mjs "$RUNNER_TEMP/site"
 
       - name: Purge the Qiniu CDN and verify an edge
         env:
