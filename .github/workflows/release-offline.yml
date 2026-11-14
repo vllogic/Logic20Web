@@ -1,8 +1,11 @@
 # Copyright (C) 2026 vllogic.com
 # Build the offline single-file Logic20Web app and publish it to a GitHub Release.
 #
-# Trigger: push a tag named `Logic20Web-YYYYMMDD` (the tag is also the asset name).
-#   git tag Logic20Web-20261114 && git push origin Logic20Web-20261114
+# Trigger: push a tag named `Logic20Web-YYYYMMDD` (the tag is also the release name).
+#   git tag Logic20Web-20261115 && git push origin Logic20Web-20261115
+#
+# Assets are named `Logic20Web-<version>-<short-sha>-<date>.html` and `.zip`
+# (for example Logic20Web-0.1.0-3199e9a-20261115.html).
 #
 # The artifact is the portable build already used by `npm run dist`:
 # index.html contains the UI, Workers, Pyodide WASM/stdlib and the sigrok decoders,
@@ -93,9 +96,17 @@ jobs:
       - name: Package the release assets
         run: |
           set -euo pipefail
-          HTML="$TAG.html"
+          VERSION=$(node -p "require('./package.json').version")
+          HASH=$(git rev-parse --short HEAD)
+          DATE=${TAG#Logic20Web-}
+          BASE="Logic20Web-${VERSION}-${HASH}-${DATE}"
+          HTML="$BASE.html"
+          ZIP="$BASE.zip"
+          echo "HTML=$HTML" >> "$GITHUB_ENV"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
 
-          # Rename the single file to the tag; the HTML itself has no sibling assets.
+          # Rename the single file to the versioned asset name; the HTML itself has
+          # no sibling assets.
           cp dist/index.html "$HTML"
 
           # GPL/third-party texts must travel with the object code. They sit beside
@@ -103,11 +114,11 @@ jobs:
           cp dist/LICENSE.txt LICENSE.txt
           cp dist/THIRD_PARTY_LICENSES.txt THIRD_PARTY_LICENSES.txt
 
-          sed "s/@TAG@/$TAG/g" <<'EOF' > README-offline.txt
-          Logic20Web offline build — @TAG@
+          sed -e "s/@NAME@/$BASE/g" -e "s/@TAG@/$TAG/g" <<'EOF' > README-offline.txt
+          Logic20Web offline build — @NAME@
 
           1. Extract this archive.
-          2. Double-click @TAG@.html (open it in Chrome or Edge).
+          2. Double-click @NAME@.html (open it in Chrome or Edge).
           3. Connect the Logic20, click Device, choose the device, then Capture.
 
           The HTML is a single self-contained file: no server, no Node/npm/Python,
@@ -141,24 +152,24 @@ jobs:
           EOF
 
           # -j keeps the archive flat: one HTML, the licences, the README and the rule.
-          zip -j "$TAG.zip" "$HTML" LICENSE.txt THIRD_PARTY_LICENSES.txt \
+          zip -j "$ZIP" "$HTML" LICENSE.txt THIRD_PARTY_LICENSES.txt \
             README-offline.txt 99-logic20.rules
 
-          sha256sum "$HTML" "$TAG.zip" > SHA256SUMS.txt
+          sha256sum "$HTML" "$ZIP" > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-          sed "s/@TAG@/$TAG/g" <<'EOF' > RELEASE-NOTES.md
+          sed -e "s/@NAME@/$BASE/g" -e "s/@TAG@/$TAG/g" <<'EOF' > RELEASE-NOTES.md
           ## Offline single-file build — @TAG@
 
           **Assets**
 
-          - `@TAG@.html` — the whole app in one file (about 25 MB). Download it and open it in Chrome or Edge.
-          - `@TAG@.zip` — the same HTML plus the licence texts, an offline README and a Linux udev rule.
+          - `@NAME@.html` — the whole app in one file (about 25 MB). Download it and open it in Chrome or Edge.
+          - `@NAME@.zip` — the same HTML plus the licence texts, an offline README and a Linux udev rule.
           - `SHA256SUMS.txt` — checksums for the two files above.
 
           **Usage**
 
-          1. Open `@TAG@.html` in Chrome or Edge (extract the zip first if you downloaded that).
+          1. Open `@NAME@.html` in Chrome or Edge (extract the zip first if you downloaded that).
           2. Connect the Logic20, click **Device**, choose the device, then **Capture**.
 
           No installation, no local server, no Node/npm/Python and no network are needed.
@@ -180,5 +191,15 @@ jobs:
           else
             gh release create "$TAG" --verify-tag --title "$TAG" --notes-file RELEASE-NOTES.md
           fi
-          gh release upload "$TAG" "$TAG.html" "$TAG.zip" SHA256SUMS.txt --clobber
+
+          # Keep only this run's three assets: an older release of the same tag may
+          # still carry the previous tag-named .html/.zip.
+          gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+            case "$name" in
+              "$HTML"|"$ZIP"|"SHA256SUMS.txt") continue ;;
+            esac
+            gh release delete-asset "$TAG" "$name" --yes || true
+          done
+
+          gh release upload "$TAG" "$HTML" "$ZIP" SHA256SUMS.txt --clobber
           gh release view "$TAG" --json url,assets --jq '{url, assets: [.assets[].name]}'
