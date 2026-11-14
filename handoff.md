@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-14，对应 `main` 的 `d676b52`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
+最后更新：2026-11-14，对应 `main` 的 `ccd22f4`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
 
 ---
 
@@ -61,7 +61,8 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 ## 3. Logic20 数据通路（当前实现）
 
 1. 设备：20 lane，每 lane 每 word 32 samples；一个 snapshot = `nchan` words = 32 个采样时刻。`nchan` 是本次**选中**的 lane 数，不要求连续，也不要求是 2 的幂。
-   - UI 固定三行 D0–D7 / D8–D15 / D16–D19；每行右侧“全选/全不选”，不再有 2CH/4CH/… 和 A0 模拟按钮（A0 只保留给 32U3）。
+   - UI 固定三行 D0–D7 / D8–D15 / D16–D19；每行右侧“全选/全不选”，不再有 2CH/4CH/… 和 A0 模拟按钮（A0 只保留给 32U3）。未连接设备时也按 Logic20 UI 显示（20 lane、comparator 阈值、无全局触发/模拟），连接 32U3 后才切换到其宽度/模拟/触发 UI。
+   - “全不选”会实际清空该行；如果清空后总选中数为 0，自动重新选中最小通道 D0。单个芯片和助手的通道列表同样遵守“至少一路”。
    - 选中顺序记时间戳；`selected × samplerate > 4500 Mbps` 时按“未引用优先、最早选定优先、同时间通道号大优先”强制关闭，至少保留 1 路；被关闭通道的触发/总线/解码器引用会被清理并提示。
    - 4500 Mbps 是硬限制；>2560 Mbps 只显示“可能超出 USB 链路带宽（WebUSB综合限制）”。
    - 存储按选中通道稀疏分配（`PlanarSampleStore.setActiveChannels`），未选通道不分配平面，内存不再按 20 路膨胀。
@@ -273,6 +274,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 ## 9. 近期提交（截至交接）
 
 ```
+ccd22f4  fix(ui): allow clearing a row and open with the Logic20 layout
 d676b52  fix(device): carry parked reads into the next Logic20 capture
 3dc24e9  fix(device): discard pre-ACK tail before a new Logic20 capture
 dbbd34f  fix(ui): open on the Logic20 80 MS/s default
