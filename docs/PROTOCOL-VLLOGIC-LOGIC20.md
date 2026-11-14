@@ -128,6 +128,11 @@ WebUSB has no cancellable `transferIn`, so two things replace the native drain:
   the next START would otherwise consume it as the new capture's first samples. The
   drain clears it in 1-9 reads. `?vllogic-drain=0` disables it.
 
+Loop capture is host-side for the Logic20: the board streams until STOP and the page
+keeps only the newest `loopRetentionLen` samples, dropping the front in large
+512-aligned blocks after each display commit. There is no device-side ring, so a
+triggered loop is not offered yet.
+
 A capture with no data block within 1000 ms of START fails with `device.noData`
 (`?vllogic-firstblock=<ms>` overrides it, 20..60000). This is the wedged-board state:
 commands are acknowledged, the bulk endpoint stays silent, and the page would

@@ -24,13 +24,17 @@
 
 ```
 src/device/vllogic.ts            Logic20 WebUSB 传输、并发读取泵、首块校验、drop/seq 上报
+src/device/vllogicWorker.ts      Worker 内读泵 + parser + 120 Hz 聚合（生产默认路径）
+src/device/workerVllogicDevice.ts 页面侧 Worker 包装（store 写入、stats、回退）
+src/device/vllogicWorkerProtocol.ts Worker 消息协议 + buffer 池回传
 src/device/vllogicProtocol.ts    UHSIF v2.2：CRC、LUT、通道映射、parser、div/阈值
 src/device/profiles.ts           Logic20 / SLogic profile、速率上限
 src/device/vllogicSelftest.ts    Logic20 离线自检（16 项）
 src/device/bench/                真实硬件评估页（不参与生产构建）
 src/data/planarStore.ts          channel-major 位平面存储 + min/max pyramid
 src/data/bitplane.ts             BitPlane（writeWords 快路径）
-src/data/channelMajorCoalescer.ts 120 Hz 合并提交
+src/data/channelMajorCoalescer.ts 120 Hz 合并提交（loop 下用 target.length 作帧起点）
+src/ui/thresholdOptions.ts        阈值预设拆分（数值 + 右对齐的 CMOS 标注）
 src/data/channelMajorCoalescerSelftest.ts
 src/ui/app.ts                    采集主流程；startChannelMajor 接入、captureCoalescer
 src/ui/pwaUpdate.ts              SW 注册、升级图标、升级提示卡（3 s 自动收起）
@@ -57,6 +61,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 
 1. 设备：20 lane，每 lane 每 word 32 samples；一个 snapshot = `nchan` words = 32 个采样时刻。
 2. UHSIF 块：16 B 头 + `payload_len` 个 **32-bit 字**（不是字节！范围 120..4092），总线上一块 16 KiB。
+2b. 生产路径在 Dedicated Worker 里跑读泵 + parser；每 8.33 ms 一批（16CH@160MHz 约 2.66 MB）transfer 给页面，buffer 池 8 个 + ack 回传复用。`?vllogic-worker=0` 回退页面线程。
 3. `vllogic.ts`：
    - 保持 `depth` 条 `transferIn` 同时在飞（默认 64，单次请求 256 KiB；Chromium/Linux 实测每次完成约 230–256 KiB，64 条约 16 MiB 请求窗口；Linux 需要 `usbfs_memory_mb >= 16`。16 KiB 是 UHSIF 块粒度，不是完成长度）。
    - 完成回调**先补发**下一条读，再交给消费者；按提交序号严格排序消费。
@@ -67,6 +72,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
    - START 前排空：`?vllogic-drain=<ms>`（默认 20）；空闲窗口内完成的数据丢弃，窗口后挂起的读作为采集的第 0 条读（预 arm）。实测能把上一轮 STOP 后残留的 ~128 KiB 尾部清掉。
    - 设备身份：接受 bcdDevice `0x0802` 或 `0x0820`，拒绝 Sniffer2 的 `0x0602`。
    - `drop_flag` 边沿通过 dropout sink 上报；`seq` 跳变、`partialSnapshots` 写入 parser stats。
+   - Loop：设备无限流，app 在每次 120 Hz commit 后按 `loopRetentionLen` 丢弃前端（大块、512 对齐），`ChannelMajorCoalescer` 用 `store.length` 作为每帧起点；手动 Stop 不等 750 ms。
    - 每次采集有 `captureEpoch`，旧 readLoop 不会污染新采集。
 4. `vllogicProtocol.ts` parser：CRC 失败重同步、跨块半 word/半 snapshot 保留、按 payload 批量回调；mask 不符的 payload 整块丢弃。
 5. `planarStore`：把每通道 words 直接写进位平面，并更新 pyramid。
@@ -98,7 +104,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 通道上限 | 1200:2；600:4；300:8；150:16；≤120:20（每行 2.4 Gbit/s） |
 | 持续带宽上限 | 约 400 MB/s（原生实测） |
 | 接口 | Interface 0；Interface 1 是 DLDO，勿碰 |
-| 触发/Loop | Web 端 VLLogic 目前不支持 loop / 软件触发 |
+| 触发/Loop | 支持无触发 Loop（host 端保留最新窗口并 `dropFront`）；软件触发仍不支持 |
 | 阈值预设 | -2.5 / -1.5 / 0 / 0.6（1.2 V CMOS）/ 0.9（1.8 V）/ 1.6（3.3 V，默认）/ 2.5（5 V）/ 5 V + 自定义 |
 
 关键坑：
