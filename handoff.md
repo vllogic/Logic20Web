@@ -63,7 +63,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
    - 达到 `deviceSampleLimit` 立即 `onEnd`，不等被 Stop 的读队列排空。
    - 首块校验：`div / mask / mode / capturing` 与配置不符直接报 `device.headerMismatch`（ACK 不参与）。
    - 首块看门狗：START 后 1 s 内没有 data block 报 `device.noData`；`stop()` 会唤醒停在等待里的循环。
-   - 可选 START 前排空：`?vllogic-drain=<ms>`（默认 0）；空闲窗口内完成的数据丢弃，窗口后挂起的读作为采集的第 0 条读（预 arm）。
+   - START 前排空：`?vllogic-drain=<ms>`（默认 20）；空闲窗口内完成的数据丢弃，窗口后挂起的读作为采集的第 0 条读（预 arm）。实测能把上一轮 STOP 后残留的 ~128 KiB 尾部清掉。
    - 设备身份：接受 bcdDevice `0x0802` 或 `0x0820`，拒绝 Sniffer2 的 `0x0602`。
    - `drop_flag` 边沿通过 dropout sink 上报；`seq` 跳变、`partialSnapshots` 写入 parser stats。
    - 每次采集有 `captureEpoch`，旧 readLoop 不会污染新采集。
@@ -104,7 +104,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **`payload_len` 是 dwords**，不是字节。见 `uhsif_rx.c:767/841/928-933`、`uhsif.v`。
 - 设备每 16 KiB 完成一次读；请求 256 KiB 不会真的攒满 256 KiB。`depth × 16 KiB` 才是实际在飞窗口。
 - Chrome 的 bcdDevice 拆分与 Windows 显示不一致，不要只按 `0x0820` 拒绝。
-- WebUSB 的 `transferIn` 无法取消：默认不排空，靠 STOP+FLUSH 和首块校验；可选排空见 `?vllogic-drain`。
+- WebUSB 的 `transferIn` 无法取消：用空闲探测 + 预 arm 排空（`?vllogic-drain`，默认 20 ms）；只靠 STOP+FLUSH 不够，停止时仍有尾部在飞。
 - 高带宽（16CH@160MHz）主机落后时，STOP 后设备仍会完成已排队的尾部数据（实测约 128 KiB，`capturing=1`）。这是**本次采集的尾巴**，不是旧数据；readLoop 会在 750 ms settle 内消费，`captureEpoch` 防止旧循环越代写入。
 - 设备 `drop_flag` 不会在数据里插标记；丢样后时间轴会压缩，必须靠 drop/seq 统计告警。
 
@@ -147,8 +147,8 @@ npm run dev
 npm run dev:lan   # HTTPS，局域网访问 https://<lan-ip>:5174/src/device/bench/drain.html
 ```
 
-- 可调采样率/通道/drain 空闲窗口/depth/read KiB/轮数；每轮记录排空读、preArm、首块延迟、ACK/CRC/mask/drop/seq 统计和 stop 耗时。
-- `drain=0` 是生产现状；`drain=20` 打开“探测空闲 + 预 arm 交接”（`?vllogic-drain=<ms>`）。
+- 可调采样率/通道/drain 空闲窗口/合并提交/depth/read KiB/轮数；每轮记录排空读、preArm、首块延迟、ACK/CRC/mask/drop/seq 统计和 stop 耗时。
+- 默认 `drain=20`（生产默认）；`drain=0` 可对照。`合并提交` 用 `ChannelMajorCoalescer`，默认 8.33 ms，和 app 生产路径一致。
 - 连续多轮同时验证 stop 唤醒：卡住的循环会表现为 stop≈750 ms 且后续轮次异常。
 
 ### pyusb 协议复现（无需浏览器）
@@ -199,7 +199,7 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
    - 用 `src/device/bench/drain.html` 跑 4 轮 `drain=0`，确认每轮 stop 都远小于 750 ms、无 maskMismatch/CRC 失败。
 2. ~~START 前 drain IN 端点~~ **已完成（2026-11-14）**
    - pyusb 实测：配置 ACK 不堆积、STOP+FLUSH 后无旧数据块、START 后首块是 ACK；详见 `docs/PROTOCOL-VLLOGIC-LOGIC20.md`。
-   - 已实现可选 `?vllogic-drain=<ms>`（空闲探测 + 预 arm 交接），默认关闭；页面可对比。
+   - 已实现 `?vllogic-drain=<ms>`（空闲探测 + 预 arm 交接），**默认 20**：页面实测上一轮 STOP 后端点仍有 ~128 KiB 尾部，不开会在下一轮被当成新数据。
 3. ~~stop 唤醒 readLoop + 首块超时~~ **已完成（2026-11-14）**
    - `stop()` 调 `wakeLoop`，`loopCompleted` 可观测；`device.noData` 看门狗 1 s（`?vllogic-firstblock=<ms>`）。
 4. **Worker 迁移评估**

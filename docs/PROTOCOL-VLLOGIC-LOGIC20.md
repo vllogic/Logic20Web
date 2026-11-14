@@ -120,11 +120,13 @@ WebUSB has no cancellable `transferIn`, so two things replace the native drain:
 - `stop()` resolves the read loop's completion wait directly (`wakeLoop`); a board that
   stops sending cannot park the loop for the rest of the page session. Outstanding
   reads still get the 750 ms settle window, because they cannot be cancelled.
-- An optional pre-START drain (`?vllogic-drain=<ms>`, default `0` off) races one
-  `transferIn` against an idle window. Data completing inside the window is stale and
-  discarded; the read that outlives it becomes the capture's sequence-0 read, so no
-  reader is left behind. It is off by default because the measurement above found
-  nothing to drain.
+- A pre-START drain (`?vllogic-drain=<ms>`, default `20`) races one `transferIn`
+  against an idle window. Data completing inside the window is stale and discarded;
+  the read that outlives it becomes the capture's sequence-0 read, so no reader is
+  left behind. The browser bench found a real reason to keep it on: after a stopped
+  16 CH / 160 MHz capture the endpoint still holds the ~128 KiB tail (see above), and
+  the next START would otherwise consume it as the new capture's first samples. The
+  drain clears it in 1-9 reads. `?vllogic-drain=0` disables it.
 
 A capture with no data block within 1000 ms of START fails with `device.noData`
 (`?vllogic-firstblock=<ms>` overrides it, 20..60000). This is the wedged-board state:

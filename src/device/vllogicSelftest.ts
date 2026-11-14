@@ -400,9 +400,9 @@ async function main(): Promise<void> {
       overridden.bytes === 131072 && overridden.depth === 4 && overridden.firstBlockMs === 250 &&
         overridden.drainIdleMs === 20 &&
         rejected.bytes === 256 * 1024 && rejected.depth === 8 &&
-        rejected.firstBlockMs === 1000 && rejected.drainIdleMs === 0 &&
+        rejected.firstBlockMs === 1000 && rejected.drainIdleMs === 20 &&
         defaults.bytes === 256 * 1024 && defaults.depth === 8 &&
-        defaults.firstBlockMs === 1000 && defaults.drainIdleMs === 0,
+        defaults.firstBlockMs === 1000 && defaults.drainIdleMs === 20,
       `override=${JSON.stringify(overridden)} rejected=${JSON.stringify(rejected)} ` +
         `defaults=${JSON.stringify(defaults)}`,
     );

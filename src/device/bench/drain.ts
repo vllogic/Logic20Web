@@ -13,6 +13,7 @@
 
 import { VllogicDevice } from '../vllogic.js';
 import { PlanarSampleStore } from '../../data/planarStore.js';
+import { ChannelMajorCoalescer, displayBatchSamples } from '../../data/channelMajorCoalescer.js';
 import { CHANNEL_COUNTS, isChannelCount, type ChannelCount } from '../../types.js';
 
 const VLLOGIC_VID = 0x1209;
@@ -26,6 +27,7 @@ interface CycleResult {
   channels: number;
   seconds: number;
   target: number;
+  batchMs: number;
   depth: number;
   readKiB: number;
   drainIdleMs: number;
@@ -55,6 +57,7 @@ const channelsInput = document.getElementById('channels') as HTMLSelectElement;
 const secondsInput = document.getElementById('seconds') as HTMLInputElement;
 const cyclesInput = document.getElementById('cycles') as HTMLInputElement;
 const drainInput = document.getElementById('drain') as HTMLInputElement;
+const batchInput = document.getElementById('batch') as HTMLInputElement;
 const depthInput = document.getElementById('depth') as HTMLInputElement;
 const readKiBInput = document.getElementById('readKiB') as HTMLInputElement;
 const gapInput = document.getElementById('gap') as HTMLInputElement;
@@ -100,6 +103,7 @@ function row(result: CycleResult): HTMLTableRowElement {
   if (result.error !== null) tr.className = 'bad';
   const cells = [
     String(result.cycle),
+    result.batchMs.toFixed(2),
     String(result.drainIdleMs),
     String(result.drain.reads),
     String(result.drain.bytes),
@@ -139,8 +143,9 @@ async function runCycle(cycle: number): Promise<CycleResult> {
   const depth = Math.max(1, Math.round(Number(depthInput.value)));
   const readKiB = Math.max(4, Math.round(Number(readKiBInput.value)));
   const drainIdleMs = Math.max(0, Math.round(Number(drainInput.value)));
+  const batchMs = Math.max(0, Number(batchInput.value));
   const base: CycleResult = {
-    cycle, rate, channels, seconds, target, depth, readKiB, drainIdleMs,
+    cycle, rate, channels, seconds, target, batchMs, depth, readKiB, drainIdleMs,
     configMs: 0,
     drain: { enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0 },
     firstBlockMs: null, runMs: 0, storeLength: 0, effMSa: 0, lineMBs: 0,
@@ -153,6 +158,30 @@ async function runCycle(cycle: number): Promise<CycleResult> {
     depth, bytes: readKiB * 1024, firstBlockMs: 1000, drainIdleMs,
   });
   const store = new PlanarSampleStore({ channelCount: channels, samplerate: rate });
+  const batchSamples = batchMs > 0
+    ? displayBatchSamples(rate, 1000 / batchMs)
+    : 0;
+  const markFirstCommit = (): void => {
+    if (firstCommitAt === 0) firstCommitAt = performance.now();
+  };
+  // Match the app's production path when batching is on: one 120 Hz-class commit
+  // instead of one commit per device block. batchMs = 0 keeps the per-block path.
+  const coalescer = batchSamples > 0
+    ? new ChannelMajorCoalescer({
+      beginFrame: (chs) => store.beginFrame(chs),
+      appendChannel: (ch, start, words) => store.appendChannel(ch, start, words),
+      commitSamples: (samples) => store.commitSamples(samples),
+    }, batchSamples, markFirstCommit)
+    : null;
+  const sink = coalescer ?? {
+    begin: (chs: readonly number[]) => store.beginFrame(chs),
+    channel: (ch: number, start: number, words: Uint32Array) =>
+      store.appendChannel(ch, start, words),
+    commit: (samples: number) => {
+      store.commitSamples(samples);
+      markFirstCommit();
+    },
+  };
   let ended = false;
   let endedAt = 0;
   let firstCommitAt = 0;
@@ -163,14 +192,7 @@ async function runCycle(cycle: number): Promise<CycleResult> {
   try {
     await device.startChannelMajor(
       { channels, samplerate: rate, thresholdVolts: 1.65 },
-      {
-        begin: (chs) => store.beginFrame(chs),
-        channel: (ch, start, words) => store.appendChannel(ch, start, words),
-        commit: (samples) => {
-          store.commitSamples(samples);
-          if (firstCommitAt === 0) firstCommitAt = performance.now();
-        },
-      },
+      sink,
       undefined,
       {
         deviceSampleLimit: target,
@@ -184,6 +206,8 @@ async function runCycle(cycle: number): Promise<CycleResult> {
     while (!ended && failure === null && performance.now() - armedAt < CAPTURE_TIMEOUT_MS) {
       await delay(10);
     }
+    // A pending coalescer batch is part of the capture: publish it before measuring.
+    coalescer?.flush();
     const runEnd = endedAt > 0 ? endedAt : performance.now();
     base.runMs = runEnd - armedAt;
     base.firstBlockMs = firstCommitAt > 0 ? firstCommitAt - armedAt : null;
@@ -247,7 +271,8 @@ runButton.addEventListener('click', async () => {
       const failure: CycleResult = {
         cycle: i + 1,
         rate: Number(rateInput.value), channels: Number(channelsInput.value),
-        seconds: Number(secondsInput.value), target: 0, depth: 0, readKiB: 0,
+        seconds: Number(secondsInput.value), target: 0,
+        batchMs: Number(batchInput.value), depth: 0, readKiB: 0,
         drainIdleMs: Number(drainInput.value), configMs: 0,
         drain: { enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0 },
         firstBlockMs: null, runMs: 0, storeLength: 0, effMSa: 0, lineMBs: 0,

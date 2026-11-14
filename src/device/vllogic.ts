@@ -74,7 +74,7 @@ const MAX_FIRST_BLOCK_MS = 60_000;
  * raced against this idle window; data completing inside it is discarded, and the
  * read that survives the window becomes the capture's first armed read. 0 disables it.
  */
-const DEFAULT_DRAIN_IDLE_MS = 0;
+const DEFAULT_DRAIN_IDLE_MS = 20;
 const MAX_DRAIN_IDLE_MS = 200;
 const MAX_DRAIN_READS = 64;
 
@@ -117,7 +117,9 @@ export function vllogicReadTuning(search?: string): VllogicReadTuning {
     const bytes = Number(params.get('vllogic-read'));
     const depth = Number(params.get('vllogic-depth'));
     const firstBlockMs = Number(params.get('vllogic-firstblock'));
-    const drainIdleMs = Number(params.get('vllogic-drain'));
+    // 0 is a valid drain value (disabled), so an absent parameter must not become 0.
+    const drainParam = params.get('vllogic-drain');
+    const drainIdleMs = drainParam === null ? Number.NaN : Number(drainParam);
     return {
       bytes: Number.isInteger(bytes) && bytes >= 4096 && bytes <= MAX_READ_BYTES
         ? bytes : defaults.bytes,
