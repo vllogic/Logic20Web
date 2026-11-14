@@ -524,8 +524,9 @@ async function main(): Promise<void> {
     const stopMs = performance.now() - t0;
     check(
       'stop() returns promptly after a finite capture delivered its budget',
-      ended && stopMs < 100,
-      `ended=${ended} stopMs=${stopMs.toFixed(0)}`,
+      ended && stopMs < 100 && device.loopCompleted && device.parserStats !== null,
+      `ended=${ended} stopMs=${stopMs.toFixed(0)} loopCompleted=${device.loopCompleted} ` +
+        `parser=${device.parserStats !== null}`,
     );
   }
 

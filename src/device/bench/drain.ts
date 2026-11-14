@@ -212,7 +212,10 @@ async function runCycle(cycle: number): Promise<CycleResult> {
     base.runMs = runEnd - armedAt;
     base.firstBlockMs = firstCommitAt > 0 ? firstCommitAt - armedAt : null;
     base.storeLength = store.length;
-    base.effMSa = store.length / 1e6 / (Math.max(1, base.runMs) / 1000);
+    // START latency (drain + first block) is not part of the streaming rate: a
+    // 160 MSa/s capture that starts 14 ms late still transfers at 160 MSa/s.
+    const dataMs = Math.max(1, base.runMs - (base.firstBlockMs ?? 0));
+    base.effMSa = store.length / 1e6 / (dataMs / 1000);
   } catch (e) {
     failure = errorText(e);
   }
@@ -225,11 +228,12 @@ async function runCycle(cycle: number): Promise<CycleResult> {
   }
   base.stopMs = performance.now() - stopStart;
   // The parser counters are final only after stop() joined the read loop.
-  const elapsedSec = Math.max(0.001, base.runMs / 1000);
+  const dataSec = Math.max(0.001,
+    (base.runMs - (base.firstBlockMs ?? 0)) / 1000);
   base.transfers = device.readStats.transfers;
   base.shortReads = device.readStats.shortReads;
   base.peakInFlight = device.readStats.peakInFlight;
-  base.lineMBs = device.readStats.bytes / 1e6 / elapsedSec;
+  base.lineMBs = device.readStats.bytes / 1e6 / dataSec;
   base.parser = device.parserStats
     ? {
       acks: device.parserStats.acks,

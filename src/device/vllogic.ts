@@ -633,9 +633,15 @@ export class VllogicDevice implements Device {
         this.clearFirstBlockWatchdog();
         this.wakeLoop = null;
       }
-      // The device has been (or is being) stopped, so outstanding reads complete as
-      // short reads. Bound the wait: a wedged board must not keep the loop alive.
-      await Promise.race([Promise.allSettled([...inFlight]), delay(STOP_SETTLE_MS)]);
+      // A finite capture that already delivered its budget has no tail to collect:
+      // the board stops sending after STOP, so these reads never complete. Finalise
+      // the statistics now instead of paying the settle window for them.
+      const complete = this.targetSamples > 0 && this.emittedSamples >= this.targetSamples;
+      if (!complete) {
+        // The device has been (or is being) stopped, so outstanding reads complete as
+        // short reads. Bound the wait: a wedged board must not keep the loop alive.
+        await Promise.race([Promise.allSettled([...inFlight]), delay(STOP_SETTLE_MS)]);
+      }
       if (!current) return;
       this.parser?.finish();
       this.parserStats = this.parser?.stats ?? null;
