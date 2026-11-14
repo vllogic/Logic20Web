@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-14，对应 `main` 的 `7e0e47b`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值）。
+最后更新：2026-11-14，对应 `main` 的 `87f8ef6`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步）。
 
 ---
 
@@ -74,9 +74,10 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
    - 设备身份：接受 bcdDevice `0x0802` 或 `0x0820`，拒绝 Sniffer2 的 `0x0602`。
    - `drop_flag` 边沿通过 dropout sink 上报；`seq` 跳变、`partialSnapshots` 写入 parser stats。
    - Loop：设备无限流，app 在每次 120 Hz commit 后按 `loopRetentionLen` 丢弃前端（大块、512 对齐），`ChannelMajorCoalescer` 用 `store.length` 作为每帧起点；手动 Stop 不等 750 ms。
-   - 抽稀：10/5/2.5 MHz 设备仍按 20 MHz 流，`VllogicDecimator` 在 host 端每 2/4/8 个样本取一个，跨批保留余数，提交仍是 32 对齐。
+   - 抽稀：10/5/2.5 MHz 设备仍按 20 MHz 流，`VllogicDecimator` 在 host 端每 2/4/8 个样本取一个，跨批保留余数，提交仍是 32 对齐。有限采集的 `deviceSampleLimit` 在 START 时向下对齐到 32；尾批按 `decimateFactor` 把“剩余输出快照”换算成输入快照，避免抽稀时为了凑数跳过成块输入、破坏尾部连续性。
    - 每次采集有 `captureEpoch`，旧 readLoop 不会污染新采集。
-4. `vllogicProtocol.ts` parser：CRC 失败重同步、跨块半 word/半 snapshot 保留、按 payload 批量回调；mask 不符的 payload 整块丢弃。
+   - `release()` 是可等待的 stop + releaseInterface + close；`terminate()` 只是 `void release()`。评估页用 `await release()`，不再 sleep 固定 700 ms。
+4. `vllogicProtocol.ts` parser：CRC 失败重同步、跨块半 word/半 snapshot 保留、按 payload 批量回调；mask 不符的 payload 整块丢弃。CRC 失败照 `uhsif_rx.c` 的 replay 实现：丢弃当前未完成快照（计入 `partialSnapshots`），把坏头 magic 之后的 15 B 放回 SCAN，一个坏块只记 1 次 `crcFail`，不会按字节左移刷噪声。
 5. `planarStore`：把每通道 words 直接写进位平面，并更新 pyramid。
 6. `channelMajorCoalescer`：把 per-payload 的 commit 合并到 **120 Hz**（8.33 ms，样本数按 32 对齐），采集结束/手动 Stop 时 flush 尾批。
 7. UI：`liveDrawDue` 按上一帧成本节流绘制；显示层本来就是 ~120 Hz 更新。
@@ -88,6 +89,8 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - **首块无看门狗**：START 后设备被卡住（命令都 ACK、bulk 不出数）时 UI 会一直 Capturing。现在 1 s 内没有 data block 就报 `device.noData`（`?vllogic-firstblock=<ms>` 可调，20..60000）。
 - **首块校验误报**：`acceptBatch` 只对 data block 的 header 做校验；START 的 ACK 不更新 `lastHeader`，不会触发 `device.headerMismatch`。
 - **mask 不符仍消费 payload**：parser 现在整块丢弃 mask 与配置不符的 payload（`discardPayload`），避免旧 lane 顺序混进采集；`maskMismatch` 仍计数。
+- **CRC 重同步逐字节左移**：不要把移位后的 15 B 当新头继续验 CRC（会刷 `crcFail`，还可能吞掉紧随其后的真头）。现在照 `uhsif_rx.c` 把它们回放给 SCAN，一次坏块只记一次；已攒的完整快照必须先 flush，半快照计入 `partialSnapshots`。
+- **target 用 `Math.ceil` 截断**：整快照提交不可能精确命中任意样本数，`Math.ceil` 会超预算最多 31 样本。现在 START 时向下对齐到 32，抽稀尾批再按 `decimateFactor` 换算；不要改回向上取整或按输出快照数截输入。
 - **coalescer 尾批**：`startChannelMajor()` 在 START 完成后就返回；曾在这里把 coalescer 引用置空，导致 `onEnd`/手动 Stop 无法 flush 最后一批。现在 coalescer 保持到 `finishCapture`，`onEnd` 和 `finishCapture` 都 flush。
 - **升级提示卡**：不再永久占用右上角；显示 3 秒自动收起，升级图标保持 ready。
 - **bcdDevice**：真实 Logic20 在 Windows 显示 `REV_0820`，Chrome 的 `deviceVersionMajor/Minor` 组合出来是 `0x0802`；两种都接受。
@@ -231,14 +234,13 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 
 ### P2
 
-- `acceptBatch` 的 target 截断用 `Math.ceil`，`remaining` 非 32 倍数时最多超 31 样本；改为向下对齐或在启动前对齐 `deviceSampleLimit`。
-- 补测试：drop/seq/partial 上报、首块 `capturing=0`、`onEnd` 晚于 `startChannelMajor` 返回、手动 Stop 尾批 flush、coalescer 单批大于 batchSamples、20CH/120MHz 真实批次大小、host-loop 的 drop 与窗口同步。
-- `device.recommendedSamplerateHz` 与 `profiles.ts` 的 `recommendedSamplerateHzFor()` 两套推荐值不一致；统一。
-- 评估页 `terminate()` 是 fire-and-forget + 700 ms 等待；改成可等待的 release/close。
-- `vllogicProtocol.ts` 的 CRC 失败重同步目前逐字节左移；可照 `uhsif_rx.c` 的 replay 实现，减少 `crcFail` 噪声。
-- ~~`maskMismatch` 后仍继续消费 payload~~ **已修（2026-11-14）**：整块丢弃，不再混入。
-- 文档/注释里再全局搜一次 “4092-byte”“51 snapshots”“multiple of four”，确保都改成 dwords 语义（`vllogicProtocol.ts` 里的一处已改）。
-- `reportReadStats`/bench 的统计口径继续与 app 实际路径保持一致。
+- ~~`acceptBatch` 的 target 截断用 `Math.ceil`~~ **已修（2026-11-14）**：START 时把 `deviceSampleLimit` 向下对齐到 32 的倍数（小于 32 时至少一批）；抽稀时尾批按 `decimateFactor` 换算输入快照，样本正好落在预算上且尾部连续。回归：`vllogicSelftest` 的非对齐预算、10 MHz 抽稀尾批逐位比对。
+- ~~CRC 失败重同步逐字节左移~~ **已修（2026-11-14）**：按 `uhsif_rx.c` 的 replay 实现，坏头后 15 B 回 SCAN；一个坏块 1 次 `crcFail`，已攒的完整快照保留，半快照计入 `partialSnapshots`。
+- ~~评估页 `terminate()` + 700 ms 等待~~ **已修（2026-11-14）**：`VllogicDevice.release()` 可等待，`drain.html` / `vllogic-read.html` 直接 `await`。
+- ~~`device.recommendedSamplerateHz` 与 `profiles.ts` 不一致~~ **已核对（2026-11-14）**：两处 20 lane 都是 80 MHz，`profiles.ts` 的注释也已从“160 MHz / 100 MHz 推荐”改成现行 120 MHz 上限 / 80 MHz 推荐。
+- 补测试：drop / seq / partial 上报、首块 `capturing=0`、非对齐预算、抽稀尾批已覆盖；仍缺 `onEnd` 早于/晚于 `startChannelMajor` 返回的显式断言、手动 Stop 的尾批 flush（app 级）、20CH/120MHz 真实批次大小、host-loop 的 drop 与窗口同步。
+- 文档/注释里再全局搜一次 “4092-byte”“51 snapshots”“multiple of four”，确保都改成 dwords 语义（`vllogicProtocol.ts` 里的一处已改；`PROTOCOL-VLLOGIC-LOGIC20.md` 的 “does not have to be a multiple of four” 是正确表述，勿误删）。
+- `reportReadStats`/bench 的统计口径继续与 app 实际路径保持一致（drain 页已用 store 字节算线速，避免把 20 ms 收尾 drain 算进去）。
 - 手动 Stop 仍保留 750 ms settle（停在端点里的读不会完成）；有限采集达到预算和 Loop 的 Stop 已改为立即返回。
 
 ---
@@ -246,6 +248,8 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 ## 9. 近期提交（截至交接）
 
 ```
+87f8ef6  fix(device): land the Logic20 budget exactly and resync corrupt headers
+a6236cc  docs: refresh the handoff for worker, loop and the new scales
 7e0e47b  docs: record loop support, the worker path and the new scales
 ef21b2a  feat(device): support host-side loop captures on the Logic20
 1f0b52b  fix(ui): render the 5 V CMOS family as 5.0 V
@@ -290,6 +294,6 @@ f141300  feat(device): pipeline VLLogic reads instead of one transfer at a time
 3. 跑 `npm test` 和两个设备自检。
 4. 接真实 Logic20，跑一次 `src/device/bench/index.html` 和 `drain.html`，确认 20/80/120 MHz 的时间与有效 MSa/s。
 5. 采集走 Worker（`vllogicWorker.ts`）；先用 `?vllogic-worker=0` 跑一次页面路径对照，理解两者的差异。
-6. 再看 P2 的剩余项；drain、看门狗、Worker、host-loop 已完成，不要重复实现。
+6. 再看 P2 的剩余项；drain、看门狗、Worker、host-loop、预算对齐、CRC replay 已完成，不要重复实现。
 
 有硬件相关的疑问，优先对照 `libsigrok/src/hardware/vllogic-logic/`，而不是只看 Web 端注释——之前的 4 倍问题就是注释写错了单位。

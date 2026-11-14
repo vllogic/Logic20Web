@@ -93,6 +93,12 @@ transport calls `beginFrame()`, writes each word with `appendChannel()`, and
 publishes the snapshot with `commitSamples(32)`. A query between channel writes
 still sees the previous complete frame.
 
+When a header CRC fails the parser mirrors `uhsif_rx.c`: it drops the snapshot
+being assembled (counted in `partialSnapshots`), then rescans the 15 bytes that
+followed the rejected magic instead of testing each shifted copy as a header.
+One corrupt block therefore counts one `crcFail` and cannot swallow the real
+header that follows it.
+
 ## Starting a capture and the IN endpoint
 
 Measured 2026-11-14 with `src/device/tools/vllogic_drain_probe.py` (pyusb, firmware

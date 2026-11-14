@@ -374,10 +374,11 @@ export const SLOGIC32U3_PROFILE: DeviceProfile = {
  * VLLogic Logic20 (UHSIF v2.2). Its payload is channel-major, so the UI selects the
  * planar store and the transport delivers one channel at a time.
  *
- * The 20-lane 160 MHz ceiling is the 400 MB/s SuperSpeed load the libsigrok driver
- * admits (20 * 160 / 8 = 400 MB/s). 16 lanes reach 200 MHz and 4 lanes 800 MHz by the
- * same arithmetic. 100 MHz is the recommended 20-lane default: 250 MB/s leaves the page
- * thread headroom while the worker split is still pending.
+ * The link is SuperSpeed (5 Gbit/s); the driver admits 400 MB/s of sustained payload,
+ * but the 20-lane ceiling is 120 MHz (300 MB/s) because the FPGA samples need
+ * 2.4 Gbit/s of lane bandwidth. 16 lanes reach 150 MHz and 4 lanes 600 MHz by the same
+ * arithmetic. 80 MHz is the recommended 20-lane default: 200 MB/s leaves the consumer
+ * headroom. The worker now owns the read pump, so the page thread only writes batches.
  */
 const VLLOGIC_LINK_RATES = ['ss5'] as const;
 
