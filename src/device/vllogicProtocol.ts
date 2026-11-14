@@ -303,6 +303,14 @@ export interface VllogicParserStats {
   snapshots: number;
   junkBytes: number;
   dropBlocks: number;
+  /**
+   * The drop bit of the first data block. drop_flag is latched by the board, so a 1
+   * here may have been carried over from the previous capture rather than lost in
+   * this one; a later 0 -> 1 edge is unambiguously this capture's own drop.
+   */
+  firstDataDrop: boolean;
+  /** Snapshots delivered when the drop edge appeared; -1 when there was no edge. */
+  dropAtSnapshots: number;
   seqJumps: number;
   partialSnapshots: number;
 }
@@ -335,7 +343,7 @@ export class VllogicParser {
   readonly stats: VllogicParserStats = {
     blocks: 0, acks: 0, dataBlocks: 0, crcFail: 0, badLen: 0,
     maskMismatch: 0, payloadWords: 0, snapshots: 0, junkBytes: 0, dropBlocks: 0,
-    seqJumps: 0, partialSnapshots: 0,
+    firstDataDrop: false, dropAtSnapshots: -1, seqJumps: 0, partialSnapshots: 0,
   };
 
   /** The most recent CRC-valid data block header, or null before the first one. */
@@ -521,7 +529,11 @@ export class VllogicParser {
     }
     this.stats.dataBlocks++;
     const drop = ((w2 >>> 22) & 1) !== 0;
-    if (drop && !this.dropActive) this.stats.dropBlocks++;
+    if (this.stats.dataBlocks === 1) this.stats.firstDataDrop = drop;
+    if (drop && !this.dropActive) {
+      this.stats.dropBlocks++;
+      this.stats.dropAtSnapshots = this.stats.snapshots;
+    }
     this.dropActive = drop;
     const seq = (w3 >>> 24) & 0xFF;
     if (this.lastSeq !== null && seq !== ((this.lastSeq + 1) & 0xFF)) {

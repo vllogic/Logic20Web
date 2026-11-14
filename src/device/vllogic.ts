@@ -65,6 +65,14 @@ const MAX_READ_DEPTH = 32;
 const CONFIG_SETTLE_MS = 35;
 const STOP_SETTLE_MS = 750;
 /**
+ * Once a finite capture reaches its sample budget the host stops consuming, but the
+ * board keeps sampling until STOP takes effect. At 320 MB/s a few milliseconds of
+ * backpressure is enough to overflow the board FIFO and latch drop_flag even though
+ * every delivered sample was fine. Keep draining (and discarding) for this long after
+ * the budget, so the tail does not turn into a spurious drop.
+ */
+const TAIL_DRAIN_MS = 20;
+/**
  * A Logic20 starts streaming within a few milliseconds of START, so a second of
  * silence means the board is wedged (it still answers commands and sends nothing on
  * the bulk endpoint, the same failure the SLogic transport reports as device.noData).
@@ -206,6 +214,9 @@ export class VllogicDevice implements Device {
   private wakeLoop: (() => void) | null = null;
   /** True once the current read loop has left its wait and started tearing down. */
   loopCompleted = false;
+  /** Keep reading (and discarding) for TAIL_DRAIN_MS after a finite budget is met. */
+  private drainTail = false;
+  private tailTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Pipelined read geometry; see vllogicReadTuning(). */
   readonly readTuning: VllogicReadTuning;
@@ -348,6 +359,8 @@ export class VllogicDevice implements Device {
     this.firstBlockSeen = false;
     this.reportedDropBlocks = 0;
     this.loopCompleted = false;
+    this.drainTail = false;
+    this.clearTailTimer();
     this.dropoutSink = onDropout ?? null;
     // A payload is 4092 words, so this many snapshots can arrive before a flush.
     const maxSnapshots = Math.max(1, Math.floor(UHSIF_PAY_MAX / map.nchan));
@@ -487,6 +500,15 @@ export class VllogicDevice implements Device {
       // outstanding, and waiting for them in readLoop's finally would delay onEnd
       // until a stopped board's reads drain (or timeout) for no benefit.
       this.endOnce();
+      // Keep the endpoint drained until STOP reaches the board. This is what keeps
+      // the post-budget FIFO backlog from latching drop_flag on a clean capture.
+      this.drainTail = true;
+      this.clearTailTimer();
+      const epoch = this.captureEpoch;
+      this.tailTimer = setTimeout(() => {
+        this.tailTimer = null;
+        if (epoch === this.captureEpoch) this.drainTail = false;
+      }, TAIL_DRAIN_MS);
       void this.send(UhsifCmd.Stop).catch(() => undefined);
     }
   }
@@ -536,8 +558,8 @@ export class VllogicDevice implements Device {
       if (resume !== null && this.wakeLoop === resume) this.wakeLoop = null;
       resume?.();
     };
-    const wantsMore = (): boolean => this.running &&
-      (this.targetSamples === 0 || this.emittedSamples < this.targetSamples);
+    const wantsMore = (): boolean => this.drainTail || (this.running &&
+      (this.targetSamples === 0 || this.emittedSamples < this.targetSamples));
 
     const track = (
       sequence: number, request: Promise<USBInTransferResult>, startedAt: number,
@@ -621,7 +643,7 @@ export class VllogicDevice implements Device {
         if (data && data.byteLength > 0) {
           this.parser?.feed(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
         }
-        if (!this.running && inFlight.size === 0 && completed.size === 0) break;
+        if (!this.running && !this.drainTail && inFlight.size === 0 && completed.size === 0) break;
       }
     } catch (e) {
       if (!this.stopRequested) failure = e;
@@ -681,6 +703,7 @@ export class VllogicDevice implements Device {
       console.info(
         `[vllogic] payload=${p.payloadWords} junk=${p.junkBytes} crcFail=${p.crcFail} ` +
         `badLen=${p.badLen} maskMismatch=${p.maskMismatch} drop=${p.dropBlocks} ` +
+        `dropAtStart=${p.firstDataDrop ? 1 : 0} dropAt=${p.dropAtSnapshots} ` +
         `seqJumps=${p.seqJumps} partial=${p.partialSnapshots}`,
       );
     }
@@ -720,6 +743,12 @@ export class VllogicDevice implements Device {
     this.firstBlockTimer = null;
   }
 
+  private clearTailTimer(): void {
+    if (this.tailTimer === null) return;
+    clearTimeout(this.tailTimer);
+    this.tailTimer = null;
+  }
+
   private endOnce(): void {
     if (this.ended) return;
     this.ended = true;
@@ -731,6 +760,8 @@ export class VllogicDevice implements Device {
   async stop(): Promise<void> {
     this.stopRequested = true;
     this.running = false;
+    this.drainTail = false;
+    this.clearTailTimer();
     this.clearFirstBlockWatchdog();
     // A board that stopped streaming leaves readLoop parked on its completion wait.
     // Waking it here is what turns stop() from "give up after 750 ms" into teardown.

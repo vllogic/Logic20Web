@@ -108,6 +108,8 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 - WebUSB 的 `transferIn` 无法取消：用空闲探测 + 预 arm 排空（`?vllogic-drain`，默认 20 ms）；只靠 STOP+FLUSH 不够，停止时仍有尾部在飞。
 - 高带宽（16CH@160MHz）主机落后时，STOP 后设备仍会完成已排队的尾部数据（实测约 128 KiB，`capturing=1`）。这是**本次采集的尾巴**，不是旧数据；readLoop 会在 750 ms settle 内消费，`captureEpoch` 防止旧循环越代写入。
 - 设备 `drop_flag` 不会在数据里插标记；丢样后时间轴会压缩，必须靠 drop/seq 统计告警。
+- `drop_flag` 是设备侧 latch（`uhsif_rx.c:823-832` 按 0→1 边沿计数）。2026-11-14 pyusb 实测：上一轮溢出后，下一轮的 START **ACK** 仍带 `drop=1`，但第一个 **data block** 已经回到 0。所以上一轮的 drop 不会污染本轮数据统计；parser 也忽略 ACK 的 drop。
+- 本轮 `drop=1` 有两种来源：采集中途真实丢样，或**收尾溢出**（达到 target 后主机停读、设备在 STOP 生效前继续采样把 FIFO 灌满）。`stats.firstDataDrop`（首块 drop）和 `stats.dropAtSnapshots`（边沿出现时已交付的快照数）可以区分；若 `dropAt` 接近 `target/32`，就是收尾溢出。transport 现在在预算达成后继续读 20 ms（`TAIL_DRAIN_MS`）并丢弃，专门消除这种误报。
 
 ---
 

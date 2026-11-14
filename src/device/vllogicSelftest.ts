@@ -47,11 +47,12 @@ function u32(value: number): number[] {
 }
 
 function block(
-  mask: number, div: number, seq: number, payload: readonly number[], corrupt = false,
+  mask: number, div: number, seq: number, payload: readonly number[],
+  corrupt = false, drop = false,
 ): Uint8Array {
   const plen = payload.length;
   const w1 = mask >>> 0;
-  const w2 = ((div << 15) | (1 << 23)) >>> 0; // capturing=1
+  const w2 = ((div << 15) | (drop ? 1 << 22 : 0) | (1 << 23)) >>> 0; // capturing=1
   const w3 = ((plen << 12) | (seq << 24)) >>> 0;
   const crc = vllogicCrc16(w1, w2, w3);
   const w0 = (((corrupt ? crc ^ 0xFFFF : crc) << 16) | UHSIF_BLK_MAGIC16) >>> 0;
@@ -268,6 +269,31 @@ async function main(): Promise<void> {
         mixed.stats.maskMismatch === 1 && mixed.stats.payloadWords === 120,
       `delivered=${delivered} seen=${seen.length} maskMismatch=${mixed.stats.maskMismatch} ` +
         `payloadWords=${mixed.stats.payloadWords}`,
+    );
+  }
+
+  // drop_flag is latched by the board: the first data block's state is exposed so a
+  // carry-over from the previous capture is distinguishable from a fresh edge.
+  {
+    const payload120 = Array.from({ length: 120 }, (_, i) => i + 1);
+    const latched = new VllogicParser(map, () => {});
+    latched.feed(block(0xFFFFF, 15, 1, payload120, false, true));
+    latched.feed(block(0xFFFFF, 15, 2, payload120, false, true));
+    latched.finish();
+    const clean = new VllogicParser(map, () => {});
+    clean.feed(block(0xFFFFF, 15, 3, payload120));
+    clean.feed(block(0xFFFFF, 15, 4, payload120, false, true));
+    clean.finish();
+    check(
+      'drop_flag exposes its starting state and counts only the 0 -> 1 edge',
+      latched.stats.firstDataDrop && latched.stats.dropBlocks === 1 &&
+        latched.stats.dropAtSnapshots === 0 &&
+        !clean.stats.firstDataDrop && clean.stats.dropBlocks === 1 &&
+        clean.stats.dropAtSnapshots === 6,
+      `latched=${latched.stats.dropBlocks}/${latched.stats.firstDataDrop}` +
+        `@${latched.stats.dropAtSnapshots} ` +
+        `clean=${clean.stats.dropBlocks}/${clean.stats.firstDataDrop}` +
+        `@${clean.stats.dropAtSnapshots}`,
     );
   }
 

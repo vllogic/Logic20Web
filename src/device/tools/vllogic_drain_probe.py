@@ -192,6 +192,8 @@ class Cycle:
     post_stop: list[Block] = field(default_factory=list)
     post_stop_bytes: int = 0
     last_data_seq: int | None = None
+    first_data_drop: int | None = None
+    last_data_drop: int | None = None
     errors: list[str] = field(default_factory=list)
 
     def first_data_seq(self) -> int | None:
@@ -219,6 +221,8 @@ class Cycle:
             'firstReadBytes': self.first_read_bytes,
             'lastDataSeq': self.last_data_seq,
             'firstDataSeq': self.first_data_seq(),
+            'firstDataDrop': self.first_data_drop,
+            'lastDataDrop': self.last_data_drop,
             'capture': {
                 'bytes': self.capture_bytes,
                 **summarize(self.capture_blocks),
@@ -277,6 +281,26 @@ class Probe:
             raise
 
     def configure(self, cycle: Cycle, wait_ack: bool) -> None:
+        if self.args.tail_read_ms > 0:
+            # The WebUSB tail drain: keep consuming after the budget so the board FIFO
+            # does not overflow before STOP lands.
+            tail_deadline = time.monotonic() + self.args.tail_read_ms / 1000
+            while time.monotonic() < tail_deadline:
+                buf = self.read(50)
+                if buf is None:
+                    continue
+                cycle.capture_bytes += len(buf)
+                blocks = parse_blocks(buf)
+                cycle.capture_blocks.extend(blocks)
+                for blk in blocks:
+                    if blk.kind == 'data':
+                        cycle.last_data_drop = blk.drop
+
+        if self.args.tail_stall_ms > 0:
+            # Model the end of a WebUSB capture: the host stops reading once its budget
+            # is full, but the board keeps sampling until STOP takes effect.
+            time.sleep(self.args.tail_stall_ms / 1000)
+
         t0 = time.monotonic()
         self.write_cmd(CMD_STOP)
         if wait_ack:
@@ -364,11 +388,15 @@ class Probe:
                 cycle.first_block = blocks[0]
                 cycle.capture_bytes += len(first)
                 cycle.capture_blocks.extend(blocks)
+                for blk in blocks:
+                    if blk.kind == 'data' and cycle.first_data_drop is None:
+                        cycle.first_data_drop = blk.drop
 
-        if self.args.stall_ms > 0:
+        stall_ms = self.args.stall_ms if index <= self.args.stall_cycles else 0
+        if stall_ms > 0:
             # Model the host falling behind (a busy page thread or a stop that leaves
             # the queue full): the endpoint and the device FIFO accumulate blocks.
-            time.sleep(self.args.stall_ms / 1000)
+            time.sleep(stall_ms / 1000)
 
         deadline = time.monotonic() + self.args.duration_ms / 1000
         while time.monotonic() < deadline:
@@ -380,7 +408,30 @@ class Probe:
             cycle.capture_blocks.extend(blocks)
             for blk in blocks:
                 if blk.kind == 'data':
+                    if cycle.first_data_drop is None:
+                        cycle.first_data_drop = blk.drop
+                    cycle.last_data_drop = blk.drop
                     cycle.last_data_seq = blk.seq
+
+        if self.args.tail_read_ms > 0:
+            # The WebUSB tail drain: keep consuming after the budget so the board FIFO
+            # does not overflow before STOP lands.
+            tail_deadline = time.monotonic() + self.args.tail_read_ms / 1000
+            while time.monotonic() < tail_deadline:
+                buf = self.read(50)
+                if buf is None:
+                    continue
+                cycle.capture_bytes += len(buf)
+                blocks = parse_blocks(buf)
+                cycle.capture_blocks.extend(blocks)
+                for blk in blocks:
+                    if blk.kind == 'data':
+                        cycle.last_data_drop = blk.drop
+
+        if self.args.tail_stall_ms > 0:
+            # Model the end of a WebUSB capture: the host stops reading once its budget
+            # is full, but the board keeps sampling until STOP takes effect.
+            time.sleep(self.args.tail_stall_ms / 1000)
 
         t0 = time.monotonic()
         self.write_cmd(CMD_STOP)
@@ -406,6 +457,9 @@ class Probe:
             'durationMs': self.args.duration_ms,
             'idleMs': self.args.idle_ms,
             'stallMs': self.args.stall_ms,
+            'stallCycles': self.args.stall_cycles,
+            'tailStallMs': self.args.tail_stall_ms,
+            'tailReadMs': self.args.tail_read_ms,
             'cycles': [c.as_dict() for c in cycles],
         }
 
@@ -420,6 +474,12 @@ def main() -> None:
     ap.add_argument('--duration-ms', type=int, default=200)
     ap.add_argument('--stall-ms', type=int, default=0,
                     help='stop reading for this long before STOP, building a backlog')
+    ap.add_argument('--stall-cycles', type=int, default=9999,
+                    help='apply --stall-ms to the first N cycles only (default: all)')
+    ap.add_argument('--tail-stall-ms', type=int, default=0,
+                    help='stop reading this long before STOP, like a full capture budget')
+    ap.add_argument('--tail-read-ms', type=int, default=0,
+                    help='keep draining this long before STOP (the WebUSB tail drain)')
     ap.add_argument('--idle-ms', type=int, default=20)
     ap.add_argument('--json', type=str, default='')
     args = ap.parse_args()

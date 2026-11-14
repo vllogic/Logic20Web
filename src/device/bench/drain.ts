@@ -46,7 +46,8 @@ interface CycleResult {
   stopMs: number;
   parser: {
     acks: number; dataBlocks: number; crcFail: number; badLen: number;
-    maskMismatch: number; dropBlocks: number; seqJumps: number; partialSnapshots: number;
+    maskMismatch: number; dropBlocks: number; firstDataDrop: boolean;
+    dropAtSnapshots: number; seqJumps: number; partialSnapshots: number;
   } | null;
   ended: boolean;
   error: string | null;
@@ -117,7 +118,9 @@ function row(result: CycleResult): HTMLTableRowElement {
     String(result.parser?.acks ?? '—'),
     String(result.parser?.crcFail ?? '—'),
     String(result.parser?.maskMismatch ?? '—'),
-    String(result.parser?.dropBlocks ?? '—'),
+    result.parser === null ? '—'
+      : `${result.parser.dropBlocks}${result.parser.dropAtSnapshots >= 0
+        ? ` @${Math.round(result.parser.dropAtSnapshots / 1000)}k` : ''}`,
     String(result.parser?.seqJumps ?? '—'),
     String(result.shortReads),
     String(Math.round(result.stopMs)),
@@ -242,6 +245,8 @@ async function runCycle(cycle: number): Promise<CycleResult> {
       badLen: device.parserStats.badLen,
       maskMismatch: device.parserStats.maskMismatch,
       dropBlocks: device.parserStats.dropBlocks,
+      firstDataDrop: device.parserStats.firstDataDrop,
+      dropAtSnapshots: device.parserStats.dropAtSnapshots,
       seqJumps: device.parserStats.seqJumps,
       partialSnapshots: device.parserStats.partialSnapshots,
     }
