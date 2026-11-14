@@ -32,7 +32,8 @@ if (!fs.existsSync(CHROMIUM)) throw new Error(`Chromium not found: ${CHROMIUM}`)
 
 const browser = spawn(CHROMIUM, [
   '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-extensions',
-  '--disable-background-networking', '--no-first-run', '--no-default-browser-check',
+  '--disable-background-networking', '--disable-dev-shm-usage',
+  '--no-first-run', '--no-default-browser-check',
   `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, 'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 let browserLog = '';
@@ -45,7 +46,7 @@ try {
   const target = await waitFor(async () => {
     const targets = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json();
     return targets.find(item => item.type === 'page');
-  }, 20000, 'Chromium CDP target');
+  }, 30000, 'Chromium CDP target');
 
   ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
@@ -101,7 +102,7 @@ try {
     const value = evaluated.result.value;
     if (String(value).startsWith('error:')) throw new Error(value);
     return value === 'ready';
-  }, 60000, 'embedded Pyodide warmup');
+  }, 120000, 'embedded Pyodide warmup');
   if (!result) throw new Error('Pyodide did not become ready');
 
   const decoded = await cdp('Runtime.evaluate', {

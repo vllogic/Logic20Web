@@ -39,9 +39,25 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      pages: ${{ steps.pages.outputs.enabled }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # The fork hosts on Cloudflare Workers; GitHub Pages is an optional overseas
+      # mirror. Do not fail the run when the repository has no Pages site yet.
+      - name: Check whether GitHub Pages is enabled
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/pages" >/dev/null 2>&1; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GitHub Pages is not enabled; skipping the Pages deploy (Settings > Pages enables it)."
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -76,6 +92,7 @@ jobs:
 
   deploy:
     needs: build
+    if: needs.build.outputs.pages == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -85,23 +102,25 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  # Keep Pages for overseas users/rollback. Publish the SAME artifact to Kodo before
-  # purging the mainland CDN; never refresh an origin that still has the old release.
+  # Keep Pages for overseas users/rollback. Publish the SAME build artifact to Kodo
+  # before purging the mainland CDN; never refresh an origin that still has the old
+  # release. This job depends on the build, not on the optional Pages deploy, so the
+  # mainland mirror still updates while Pages is disabled.
   purge-cdn:
-    needs: deploy
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The exact files Pages just published: the edge is checked against these bytes.
-      - name: Download the Pages artifact
+      # The exact files the build produced: the edge is checked against these bytes.
+      - name: Download the build artifact
         uses: actions/download-artifact@v4
         with:
           name: github-pages
           path: ${{ runner.temp }}/pages
 
-      - name: Unpack the Pages artifact
+      - name: Unpack the build artifact
         run: |
           mkdir -p "$RUNNER_TEMP/site"
           tar -xf "$RUNNER_TEMP/pages/artifact.tar" -C "$RUNNER_TEMP/site"
