@@ -3,9 +3,11 @@ import { aliasRank, fuzzyRank, highlightRuns } from './fuzzy.js';
 export interface SelectOption {
   readonly value: string;
   readonly label: string;
+  /** Secondary text (a unit, a family, a hint), rendered right-aligned in the row. */
+  readonly note?: string;
 }
 
-export type SelectOptionTuple = readonly [value: string, label: string, search?: string];
+export type SelectOptionTuple = readonly [value: string, label: string, search?: string, note?: string];
 
 export interface SelectSearch {
   readonly label: string;
@@ -68,7 +70,23 @@ export function clipHighlightPositions(
 }
 
 function normalizeOptions(options: readonly SelectOptionTuple[]): readonly SelectOption[] {
-  return options.map(([value, label]) => ({ value, label }));
+  return options.map(([value, label, _search, note]) =>
+    (note === undefined ? { value, label } : { value, label, note }));
+}
+
+/** The value on the left, its annotation flush right (the threshold family column). */
+function renderOptionLabel(el: HTMLSpanElement, option: SelectOption): void {
+  if (option.note === undefined || option.note === '') {
+    el.textContent = option.label;
+    return;
+  }
+  const main = document.createElement('span');
+  main.className = 'select-item-main';
+  main.textContent = option.label;
+  const note = document.createElement('span');
+  note.className = 'select-item-note';
+  note.textContent = option.note;
+  el.replaceChildren(main, note);
 }
 
 function buildChevron(): SVGSVGElement {
@@ -211,7 +229,7 @@ export class SelectControl extends EventTarget {
 
       const text = document.createElement('span');
       text.className = 'select-item-label';
-      text.textContent = option.label;
+      renderOptionLabel(text, option);
 
       item.append(check, text);
       item.addEventListener('pointerdown', (event) => event.preventDefault());
@@ -329,7 +347,14 @@ export class SelectControl extends EventTarget {
 
   private paintLabel(index: number, positions: readonly number[] | null): void {
     const labelEl = this.labels[index];
-    const label = this.options[index].label;
+    const option = this.options[index];
+    // A noted option keeps its two-part layout; the threshold list has no search, so
+    // there is nothing to highlight inside it.
+    if (option.note !== undefined) {
+      renderOptionLabel(labelEl, option);
+      return;
+    }
+    const label = option.label;
     const hits = positions === null ? [] : clipHighlightPositions(positions, label.length);
     if (hits.length === 0) {
       labelEl.textContent = label;
@@ -518,7 +543,14 @@ export class SelectControl extends EventTarget {
   }
 
   private syncPresentation(): void {
-    this.valueEl.textContent = resolveLabel(this.options, this.current);
+    // The trigger keeps the annotation ("1.6 V (3.3 V CMOS)"); only the row splits it
+    // into two columns.
+    const selected = this.options.find((option) => option.value === this.current);
+    this.valueEl.textContent = selected === undefined
+      ? ''
+      : selected.note === undefined || selected.note === ''
+        ? selected.label
+        : `${selected.label} ${selected.note}`;
     this.options.forEach((option, index) => {
       const selected = option.value === this.current;
       this.items[index].setAttribute('aria-selected', selected ? 'true' : 'false');

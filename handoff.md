@@ -99,7 +99,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 持续带宽上限 | 约 400 MB/s（原生实测） |
 | 接口 | Interface 0；Interface 1 是 DLDO，勿碰 |
 | 触发/Loop | Web 端 VLLogic 目前不支持 loop / 软件触发 |
-| 阈值预设 | -2.5 / -1.5 / 0 / 0.6（1.2 V CMOS）/ 0.9（1.8 V）/ 1.65（3.3 V，默认）/ 2.5（5 V）/ 5 V + 自定义 |
+| 阈值预设 | -2.5 / -1.5 / 0 / 0.6（1.2 V CMOS）/ 0.9（1.8 V）/ 1.6（3.3 V，默认）/ 2.5（5 V）/ 5 V + 自定义 |
 
 关键坑：
 

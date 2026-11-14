@@ -66,6 +66,7 @@ export class WorkerVllogicDevice implements Device {
     16: 150_000_000,
     20: 80_000_000,
   };
+  readonly testModes = [0] as const;
   readonly thresholdRange = { min: -2.5, max: 5.0 };
   readonly thresholdPresets = VLLOGIC_THRESHOLD_PRESETS;
   readonly name: string;

@@ -126,6 +126,12 @@ export interface Device {
   readonly maxChannels?: number;
   /** Discrete rates the device accepts; absent means the SLogic U3 table. */
   readonly sampleratesHz?: readonly number[];
+  /**
+   * Test-pattern modes the transport can run (0 normal, 1 USB throughput, 2 simulated).
+   * Absent means the U3 set; a comparator device that only streams real input returns
+   * `[0]`, and the capture panel then omits the test-mode row.
+   */
+  readonly testModes?: readonly (0 | 1 | 2)[];
   readonly maxSamplerateHz?: Readonly<Record<number, number>>;
   /**
    * Per-width default rate where the profile has measured the ceiling as offered but not

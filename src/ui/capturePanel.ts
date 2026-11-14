@@ -33,7 +33,7 @@ import {
   chipLabel, chipRowFit, widestChipBox,
 } from './channelChipLayout.js';
 import {
-  parseCustomThreshold, snapThreshold, thresholdChoice, thresholdOptionLabel, thresholdRange,
+  parseCustomThreshold, snapThreshold, thresholdChoice, thresholdOptionParts, thresholdRange,
   type ThresholdRange,
 } from './thresholdOptions.js';
 import { t } from './i18n.js';
@@ -181,6 +181,8 @@ export interface CapturePanelView {
   maxSamplerateHz: Readonly<Record<number, number>>;
   /** Device-specific rate table; absent means the SLogic U3 SAMPLERATES_HZ. */
   sampleratesHz?: readonly number[] | undefined;
+  /** Test-pattern modes the device supports; absent means the U3 set. */
+  testModes?: readonly (0 | 1 | 2)[] | undefined;
   /** Device comparator presets; absent means the U3 logic-family list. */
   thresholdPresets?: readonly number[] | undefined;
   /** Device comparator custom-entry range; absent means the U3 vref DAC range. */
@@ -1566,28 +1568,36 @@ export class CapturePanel {
     advanced.appendChild(summary);
     const body = div('advanced-body');
 
-    const testModeOptions: SelectOptionTuple[] = [
-      ['0', t('capturePanel.testNormal')],
-      ['2', t('capturePanel.testSimulator')],
-      ['1', t('capturePanel.testUsbMax')],
-    ];
-    const source = selectControl(
-      'capture.testMode',
-      t('capturePanel.testMode'),
-      testModeOptions,
-      String(s.testMode),
-    );
-    source.disabled = v.running;
-    source.addEventListener('change', () =>
-      this.cb.onSettings({ ...s, testMode: Number(source.value) as 0 | 1 | 2 }));
-    // What the test modes are for (and are not) before the user selects one.
-    const sourceRow = div('help-row');
-    sourceRow.append(source.el, helpTip(t('capturePanel.testModeHelp')));
-    body.appendChild(sourceRow);
-    if (s.testMode !== 0) {
-      const analogNote = div('panel-note');
-      analogNote.textContent = t('capturePanel.testModeAnalog');
-      body.appendChild(analogNote);
+    // A comparator-only transport (the Logic20) has no test patterns: offering a
+    // select whose every choice but Normal is ignored would be a lie, so the row is
+    // omitted entirely. The U3 devices and an unconnected page keep the full set.
+    const testModes = v.testModes ?? [0, 1, 2];
+    if (testModes.length > 1) {
+      const labels: Record<0 | 1 | 2, string> = {
+        0: t('capturePanel.testNormal'),
+        1: t('capturePanel.testUsbMax'),
+        2: t('capturePanel.testSimulator'),
+      };
+      const testModeOptions: SelectOptionTuple[] = testModes
+        .map((mode): SelectOptionTuple => [String(mode), labels[mode]]);
+      const source = selectControl(
+        'capture.testMode',
+        t('capturePanel.testMode'),
+        testModeOptions,
+        String(s.testMode),
+      );
+      source.disabled = v.running;
+      source.addEventListener('change', () =>
+        this.cb.onSettings({ ...s, testMode: Number(source.value) as 0 | 1 | 2 }));
+      // What the test modes are for (and are not) before the user selects one.
+      const sourceRow = div('help-row');
+      sourceRow.append(source.el, helpTip(t('capturePanel.testModeHelp')));
+      body.appendChild(sourceRow);
+      if (s.testMode !== 0) {
+        const analogNote = div('panel-note');
+        analogNote.textContent = t('capturePanel.testModeAnalog');
+        body.appendChild(analogNote);
+      }
     }
 
     // The raw register console can write device registers, so it is a developer tool:
@@ -1904,7 +1914,10 @@ export function thresholdField(o: ThresholdFieldOptions): { el: HTMLElement; foc
   const snap = o.snap ?? snapThreshold;
   const slot = div('threshold-field');
   const options: SelectOptionTuple[] = [
-    ...presets.map((preset): SelectOptionTuple => [String(preset), thresholdOptionLabel(preset)]),
+    ...presets.map((preset): SelectOptionTuple => {
+      const parts = thresholdOptionParts(preset);
+      return [String(preset), parts.label, '', parts.note];
+    }),
     ...(thresholdChoice(volts, presets) === 'custom'
       ? [[String(volts), t('capturePanel.thresholdVolts', { volts: volts.toFixed(3) })] as SelectOptionTuple]
       : []),

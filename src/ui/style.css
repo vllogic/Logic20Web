@@ -2055,6 +2055,16 @@ html[data-theme="light"] .select-trigger:hover { border-color: var(--border-high
 .select-item.active { background: var(--popover-hover); outline: 2px solid var(--ring); outline-offset: -2px; }
 .select-item-check { width: 14px; flex: none; color: var(--primary); }
 .select-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A noted option is two columns: the value left, its annotation flush right. */
+.select-item-label:has(.select-item-note) {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  overflow: visible;
+}
+.select-item-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-item-note { margin-left: auto; color: var(--muted-foreground); white-space: nowrap; }
 
 .select-popover.select-searchable {
   max-width: min(420px, calc(100vw - 16px));

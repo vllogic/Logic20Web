@@ -29,6 +29,7 @@ const FAMILIES: ReadonlyMap<number, ThresholdFamily> = new Map<number, Threshold
   [0.9, { kind: 'logic', supplyVolts: 1.8 }],
   [1.2, { kind: 'logic', supplyVolts: 2.5 }],
   [1.5, { kind: 'ttl' }],
+  [1.6, { kind: 'logic', supplyVolts: 3.3 }],
   [1.65, { kind: 'logic', supplyVolts: 3.3 }],
   [2.5, { kind: 'logic', supplyVolts: 5 }],
 ]);
@@ -37,11 +38,24 @@ export function thresholdFamily(volts: number): ThresholdFamily {
   return FAMILIES.get(volts) ?? null;
 }
 
-export function thresholdOptionLabel(volts: number): string {
+/**
+ * A preset split into the value and the family annotation. The select renders the
+ * annotation right-aligned, so the two parts travel separately instead of as one string.
+ */
+export function thresholdOptionParts(volts: number): { label: string; note: string } {
   const family = thresholdFamily(volts);
-  if (family === null) return t('capturePanel.thresholdVolts', { volts });
-  if (family.kind === 'ttl') return t('capturePanel.thresholdTtl', { volts });
-  return t('capturePanel.thresholdLogic', { volts, logic: family.supplyVolts });
+  const label = t('capturePanel.thresholdVolts', { volts });
+  if (family === null) return { label, note: '' };
+  if (family.kind === 'ttl') return { label, note: t('capturePanel.thresholdTtlNote') };
+  return {
+    label,
+    note: t('capturePanel.thresholdCmosNote', { logic: family.supplyVolts }),
+  };
+}
+
+export function thresholdOptionLabel(volts: number): string {
+  const { label, note } = thresholdOptionParts(volts);
+  return note === '' ? label : `${label} ${note}`;
 }
 
 /**

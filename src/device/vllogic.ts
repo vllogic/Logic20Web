@@ -190,6 +190,7 @@ export class VllogicDevice implements Device {
     20: 80_000_000,
   };
   /** Measured comparator range, see vllogicThresholdToPwm(). */
+  readonly testModes = [0] as const;
   readonly thresholdRange = { min: -2.5, max: 5.0 };
   readonly thresholdPresets = VLLOGIC_THRESHOLD_PRESETS;
 

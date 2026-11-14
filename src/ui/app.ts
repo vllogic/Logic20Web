@@ -5071,6 +5071,8 @@ export class App {
       progress: this.running ? this.progressView() : null,
       maxSamplerateHz: this.rateCeilings,
       sampleratesHz: this.device?.sampleratesHz,
+      // No device: no test-mode row until a board that has patterns is connected.
+      testModes: this.device === null ? [] : this.device.testModes,
       thresholdPresets: this.device?.thresholdPresets,
       thresholdRange: this.device?.thresholdRange
         ? { min: this.device.thresholdRange.min, max: this.device.thresholdRange.max, step: 0.001 }
@@ -6073,12 +6075,12 @@ export class App {
     if (this.deviceAnalogGroups() === 0) {
       this.busViews = this.busViews.filter((bus) => bus.analogGroup === undefined);
     }
-    // A comparator device with its own presets (the Logic20) starts on 1.65 V, the
+    // A comparator device with its own presets (the Logic20) starts on 1.6 V, the
     // 3.3 V CMOS mid-swing, instead of a U3 preset it does not offer.
     const presets = device.thresholdPresets;
     const thresholdVolts = presets !== undefined && presets.length > 0 &&
       !presets.includes(this.settings.thresholdVolts)
-      ? (presets.includes(1.65) ? 1.65 : presets[0]!)
+      ? (presets.includes(1.6) ? 1.6 : presets[0]!)
       : this.settings.thresholdVolts;
     // A board change may clamp the rate; keep a loop window's duration across it.
     const adopted = this.clampSettings({

@@ -522,6 +522,8 @@ export const fr: Messages = {
   'capturePanel.threshold': 'Seuil',
   'capturePanel.thresholdVolts': '{volts} V',
   'capturePanel.thresholdLogic': '{volts} V (CMOS {logic} V)',
+  'capturePanel.thresholdCmosNote': '(CMOS {logic} V)',
+  'capturePanel.thresholdTtlNote': '(TTL 5 V)',
   'capturePanel.thresholdTtl': '{volts} V (TTL 5 V)',
   'capturePanel.thresholdCustom': 'Personnalisé…',
   'capturePanel.thresholdRange': 'Saisissez {min} à {max} V ; la valeur s’aligne sur le pas réglable le plus proche de la carte',

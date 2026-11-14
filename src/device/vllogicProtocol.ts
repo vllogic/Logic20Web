@@ -122,12 +122,12 @@ export function vllogicRateFor(rate: number): VllogicRate | null {
 
 /**
  * Comparator presets shown in the UI: the measured -2.5/+5.0 V endpoints, plus one
- * mid-swing point per common logic family (0.6 V for 1.2 V, 0.9 V for 1.8 V, 1.65 V for
- * 3.3 V, 2.5 V for 5.0 V CMOS). 1.65 V is the default: 3.3 V CMOS is the most common
+ * mid-swing point per common logic family (0.6 V for 1.2 V, 0.9 V for 1.8 V, 1.6 V for
+ * 3.3 V, 2.5 V for 5.0 V CMOS). 1.6 V is the default: 3.3 V CMOS is the most common
  * target. Anything else is entered as a custom value.
  */
 export const VLLOGIC_THRESHOLD_PRESETS: readonly number[] = [
-  -2.5, -1.5, 0, 0.6, 0.9, 1.65, 2.5, 5,
+  -2.5, -1.5, 0, 0.6, 0.9, 1.6, 2.5, 5,
 ];
 
 /** Applies the device's per-rate channel ceiling (see vllogic_max_channels()). */
