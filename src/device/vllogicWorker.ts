@@ -128,6 +128,20 @@ async function handle(message: Exclude<VllogicToWorker, { kind: 'terminate' }>):
       if (device) {
         await device.stop().catch(() => undefined);
         coalescer?.flush();
+        post({
+          kind: 'stats',
+          read: {
+            transfers: device.readStats.transfers,
+            bytes: device.readStats.bytes,
+            shortReads: device.readStats.shortReads,
+            sumTransferMs: device.readStats.sumTransferMs,
+            maxTransferMs: device.readStats.maxTransferMs,
+            peakInFlight: device.readStats.peakInFlight,
+            elapsedMs: Math.max(1, performance.now() - device.readStats.startedAt),
+          },
+          parser: device.parserStats ? { ...device.parserStats } : null,
+          drain: { ...device.drainStats },
+        });
       }
       coalescer = null;
       post({ kind: 'stopped' });

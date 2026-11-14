@@ -165,14 +165,21 @@ export class WorkerVllogicDevice implements Device {
 
   async stop(): Promise<void> {
     if (this.closed) return;
-    this.sink = null;
-    this.onDropout = null;
-    this.onEnd = null;
-    if (this.failure) return;
+    if (this.failure) {
+      this.sink = null;
+      this.onDropout = null;
+      this.onEnd = null;
+      return;
+    }
+    // Keep the sink until the worker answers: a manual stop flushes the sub-frame tail
+    // in the worker, and those batches must still reach the store.
     const stopped = new Promise<void>((resolve) => { this.stopWaiter = resolve; });
     const message: VllogicToWorker = { kind: 'stop' };
     this.worker.postMessage(message);
     await Promise.race([stopped, delay(STOP_TIMEOUT_MS)]);
+    this.sink = null;
+    this.onDropout = null;
+    this.onEnd = null;
   }
 
   terminate(): void {
@@ -228,6 +235,30 @@ export class WorkerVllogicDevice implements Device {
         this.stopWaiter?.();
         this.stopWaiter = null;
         return;
+      case 'stats': {
+        // The worker's own console is a separate context; print the same line on the
+        // page so the capture can be judged from the normal DevTools console.
+        const read = message.read;
+        const mb = read.bytes / 1e6;
+        console.info(
+          `[vllogic] ${read.transfers} reads, ${mb.toFixed(1)} MB ` +
+          `(${(mb / read.elapsedMs * 1000).toFixed(1)} MB/s in ${read.elapsedMs.toFixed(0)} ms), ` +
+          `avg ${(read.sumTransferMs / Math.max(1, read.transfers)).toFixed(2)} ms, ` +
+          `max ${read.maxTransferMs.toFixed(1)} ms, short ${read.shortReads}, ` +
+          `inflight peak ${read.peakInFlight}, drain ${message.drain.reads} read(s)/` +
+          `${message.drain.bytes} B`,
+        );
+        const p = message.parser;
+        if (p) {
+          console.info(
+            `[vllogic] payload=${p.payloadWords} junk=${p.junkBytes} crcFail=${p.crcFail} ` +
+            `badLen=${p.badLen} maskMismatch=${p.maskMismatch} drop=${p.dropBlocks} ` +
+            `dropAtStart=${p.firstDataDrop ? 1 : 0} dropAt=${p.dropAtSnapshots} ` +
+            `seqJumps=${p.seqJumps} partial=${p.partialSnapshots}`,
+          );
+        }
+        return;
+      }
       case 'error':
         this.fail(asError(message));
         return;

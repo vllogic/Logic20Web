@@ -16,6 +16,7 @@
 
 import type { CaptureConfig } from './types.js';
 import type { VllogicReadTuning } from './vllogic.js';
+import type { VllogicParserStats } from './vllogicProtocol.js';
 import type { DiagnosticVars } from '../diagnostics.js';
 
 export interface VllogicDeviceFilter {
@@ -29,6 +30,18 @@ export type VllogicToWorker =
   | { kind: 'start'; cfg: CaptureConfig; deviceSampleLimit: number }
   | { kind: 'stop' }
   | { kind: 'terminate' };
+
+/** Receive-loop counters, cloned out of the worker for the page's `[vllogic]` line. */
+export interface VllogicReadStatsMessage {
+  transfers: number;
+  bytes: number;
+  shortReads: number;
+  sumTransferMs: number;
+  maxTransferMs: number;
+  peakInFlight: number;
+  /** Wall time from the read loop's start to the stats message. */
+  elapsedMs: number;
+}
 
 /** One coalesced channel-major frame: `words[i]` belongs to `channels[i]`. */
 export interface VllogicBatchMessage {
@@ -47,6 +60,12 @@ export type VllogicFromWorker =
   | { kind: 'dropout'; position: number; missing: number }
   | { kind: 'ended' }
   | { kind: 'stopped' }
+  | {
+      kind: 'stats';
+      read: VllogicReadStatsMessage;
+      parser: VllogicParserStats | null;
+      drain: { enabled: boolean; reads: number; bytes: number; preArmed: boolean; ms: number };
+    }
   | {
       kind: 'error';
       message: string;
