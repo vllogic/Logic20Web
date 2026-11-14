@@ -170,6 +170,18 @@ interface CompletedRead {
   readonly completedAt: number;
 }
 
+/**
+ * A transferIn that outlived its capture. WebUSB cannot cancel it, and a stopped board
+ * leaves it parked until the next capture produces bytes. The next read loop adopts it
+ * (in submission order) instead of issuing a fresh set of reads; otherwise the orphaned
+ * reads consume the new START ACK and its first data blocks, and the new parser waits for
+ * an ACK that has already gone past.
+ */
+interface CarriedRead {
+  readonly request: Promise<USBInTransferResult>;
+  settled: boolean;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -206,6 +218,8 @@ export class VllogicDevice implements Device {
   private running = false;
   private stopRequested = false;
   private loopDone: Promise<void> | null = null;
+  /** The loop stop() released; start() must let it finish collecting its parked reads. */
+  private previousLoop: Promise<void> | null = null;
   private parser: VllogicParser | null = null;
   private map: VllogicChannelMap | null = null;
   private sink: ChannelSampleSink | null = null;
@@ -243,6 +257,8 @@ export class VllogicDevice implements Device {
   /** Keep reading (and discarding) for TAIL_DRAIN_MS after a finite budget is met. */
   private drainTail = false;
   private tailTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Parked reads inherited from the previous capture; see CarriedRead. */
+  private carriedReads: CarriedRead[] = [];
 
   /** Pipelined read geometry; see vllogicReadTuning(). */
   readonly readTuning: VllogicReadTuning;
@@ -349,6 +365,13 @@ export class VllogicDevice implements Device {
     onDropout?: DropoutSink,
     options?: CaptureStartOptions,
   ): Promise<void> {
+    // The previous stop() may have returned while its loop was still recording the reads
+    // it could not cancel. Let it finish before this capture takes them over.
+    const previous = this.previousLoop;
+    this.previousLoop = null;
+    if (previous) {
+      await Promise.race([previous.catch(() => undefined), delay(STOP_SETTLE_MS)]);
+    }
     if (this.running) throw new Error('VLLogic capture already running');
     // Loop mode is host-side: the board streams and the store drops from the front when
     // the retention window is exceeded, so the transport only has to keep running until
@@ -440,11 +463,15 @@ export class VllogicDevice implements Device {
     // read that outlives the idle window to the capture loop as its first in-flight
     // read. Enabled by default (20 ms); `?vllogic-drain=0` disables it.
     const preArm = await this.drainBeforeStart(epoch);
+    // Old reads that are still parked will be the first to see the new START ACK/data.
+    // Adopt them in submission order; a read that settled before this point is stale.
+    const carried = this.carriedReads.filter((read) => !read.settled);
+    this.carriedReads = [];
 
     // Arm the IN transfer before START so the first block is not lost to a race.
     // The loop can fail from the background (first-block check, USB error); onError
     // reports it, and the catch keeps that rejection from surfacing as unhandled.
-    this.loopDone = this.readLoop(epoch, preArm);
+    this.loopDone = this.readLoop(epoch, preArm, carried);
     void this.loopDone.catch(() => undefined);
     await this.send(UhsifCmd.Start);
     this.armFirstBlockWatchdog(epoch, cfg);
@@ -619,6 +646,7 @@ export class VllogicDevice implements Device {
   private async readLoop(
     epoch: number,
     preArm?: { request: Promise<USBInTransferResult> } | null,
+    carried: readonly CarriedRead[] = [],
   ): Promise<void> {
     const { bytes: readBytes, depth } = this.readTuning;
     const stats = this.readStats;
@@ -634,6 +662,7 @@ export class VllogicDevice implements Device {
     const alive = (): boolean => epoch === this.captureEpoch;
     const completed = new Map<number, CompletedRead>();
     const inFlight = new Set<Promise<void>>();
+    const live: CarriedRead[] = [];
     let nextSequence = 0;
     let submitted = 0;
     let wake: (() => void) | null = null;
@@ -651,10 +680,13 @@ export class VllogicDevice implements Device {
 
     const track = (
       sequence: number, request: Promise<USBInTransferResult>, startedAt: number,
+      entry: CarriedRead = { request, settled: false },
     ): void => {
+      live.push(entry);
       let task!: Promise<void>;
       task = request.then(
         (result) => {
+          entry.settled = true;
           inFlight.delete(task);
           const completedAt = performance.now();
           const bytes = result.status === 'ok' && result.data ? result.data.byteLength : 0;
@@ -672,6 +704,7 @@ export class VllogicDevice implements Device {
           notify();
         },
         (error) => {
+          entry.settled = true;
           inFlight.delete(task);
           completed.set(sequence, {
             sequence, error, bytes: 0, startedAt, completedAt: performance.now(),
@@ -700,6 +733,13 @@ export class VllogicDevice implements Device {
       track(sequence, request, startedAt);
     };
 
+    // Adopt the previous capture's parked reads first: they are at the head of the
+    // endpoint queue and will receive the new START ACK before any new read.
+    for (const entry of carried) {
+      if (entry.settled) continue;
+      stats.transfers += 1;
+      track(submitted++, entry.request, performance.now(), entry);
+    }
     if (preArm) {
       stats.transfers += 1;
       track(submitted++, preArm.request, performance.now());
@@ -746,6 +786,9 @@ export class VllogicDevice implements Device {
         this.running = false;
         this.clearFirstBlockWatchdog();
         this.wakeLoop = null;
+        // Reads that survived the stop are the next capture's head reads. Keep only
+        // unsettled ones: a read that completed before the next START saw stale bytes.
+        this.carriedReads = live.filter((entry) => !entry.settled);
       }
       // A finite capture that already delivered its budget has no tail to collect:
       // the board stops sending after STOP, so these reads never complete. Finalise
@@ -863,6 +906,7 @@ export class VllogicDevice implements Device {
     }
     const loop = this.loopDone;
     this.loopDone = null;
+    this.previousLoop = loop;
     if (loop) {
       // A finite capture that already delivered its budget has nothing left to wait
       // for: the board stops sending, so its outstanding reads never complete and the
@@ -871,9 +915,11 @@ export class VllogicDevice implements Device {
       const complete = this.targetSamples > 0 && this.emittedSamples >= this.targetSamples;
       // A loop capture has no budget to wait for: the board stops on STOP and the
       // outstanding reads never complete, so the settle window is pure latency.
+      // Even then, give the loop time to publish its parked reads for the next capture.
+      const wait = complete || this.loopMode ? 50 : STOP_SETTLE_MS;
       await Promise.race([
         loop.catch(() => undefined),
-        delay(complete || this.loopMode ? 0 : STOP_SETTLE_MS),
+        delay(wait),
       ]);
     }
     this.sink = null;

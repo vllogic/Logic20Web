@@ -169,6 +169,57 @@ class FakeUsb {
   }
 }
 
+/**
+ * A USB port that parks reads when no data is queued, like a stopped Logic20. The next
+ * START wakes the parked reads with the ACK/data, so they must be carried into the new
+ * read loop instead of being abandoned.
+ */
+class CarryUsb {
+  opened = true;
+  readonly productName = 'Logic20';
+  readonly serialNumber = 'carry';
+  deviceVersionMajor = 8;
+  deviceVersionMinor = 0x02;
+  readonly deviceVersionSubminor = 0;
+  readonly chunks: Uint8Array[] = [];
+  started = false;
+  ackQueued = false;
+  readonly parked: Array<() => void> = [];
+
+  async open(): Promise<void> {}
+  async selectConfiguration(_value: number): Promise<void> {}
+  async claimInterface(_number: number): Promise<void> {}
+  async releaseInterface(_number: number): Promise<void> {}
+  async close(): Promise<void> {}
+
+  async transferOut(_endpoint: number, data: ArrayBuffer): Promise<USBOutTransferResult> {
+    const cmd = new DataView(data).getUint32(4, true);
+    if (cmd === UhsifCmd.Start) {
+      this.started = true;
+      this.ackQueued = true;
+      for (const wake of this.parked.splice(0)) wake();
+    }
+    return { status: 'ok', bytesWritten: data.byteLength };
+  }
+
+  async transferIn(_endpoint: number, _length: number): Promise<USBInTransferResult> {
+    for (;;) {
+      if (this.started) {
+        if (this.ackQueued) {
+          this.ackQueued = false;
+          const ack = block(0xFFFFF, 30, 0, []);
+          return { status: 'ok', data: new DataView(ack.buffer) };
+        }
+        const chunk = this.chunks.shift();
+        if (chunk !== undefined) {
+          return { status: 'ok', data: new DataView(chunk.buffer) };
+        }
+      }
+      await new Promise<void>((resolve) => this.parked.push(resolve));
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const nodeProc = (globalThis as {
     process?: { on?: (event: string, cb: (e: unknown) => void) => void };
@@ -786,6 +837,56 @@ async function main(): Promise<void> {
       'a same-mask tail before the START ACK cannot rotate the capture',
       aligned && (device.parserStats?.preAckBlocks ?? 0) === 1,
       `ended=${ended} length=${store.length} preAck=${device.parserStats?.preAckBlocks}`,
+    );
+  }
+
+  // Reads parked by the previous capture become the next capture's first reads. If they
+  // were abandoned they would consume the new START ACK and every data block after it.
+  {
+    const usb = new CarryUsb();
+    const device = await VllogicDevice.open(
+      usb as unknown as USBDevice,
+      { depth: 4, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+    );
+    const wire = (seq: number): Uint8Array => {
+      const payload: number[] = [];
+      for (let s = 0; s < 10; s++) {
+        for (let c = 0; c < 20; c++) payload.push(c === 1 ? 0 : 0xFFFFFFFF);
+      }
+      return block(0xFFFFF, 30, seq, payload);
+    };
+    const capture = async (): Promise<{ store: PlanarSampleStore; ended: boolean }> => {
+      const store = new PlanarSampleStore({ channelCount: 20, samplerate: 80e6 });
+      store.setActiveChannels([...Array(20).keys()]);
+      let ended = false;
+      await device.startChannelMajor(
+        { channels: 20, selectedChannels: [...Array(20).keys()], samplerate: 80e6, thresholdVolts: 0.6 },
+        {
+          begin: (channels) => store.beginFrame(channels),
+          channel: (channel, start, words) => store.appendChannel(channel, start, words),
+          commit: (samples) => store.commitSamples(samples),
+        },
+        undefined,
+        { deviceSampleLimit: 320, onEnd: () => { ended = true; } },
+      );
+      for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+      await device.stop();
+      return { store, ended };
+    };
+    usb.chunks.push(wire(1));
+    const first = await capture();
+    usb.chunks.push(wire(2));
+    const second = await capture();
+    const aligned = second.ended && second.store.length === 320 &&
+      Array.from({ length: 320 }, (_, s) => s).every((s) =>
+        second.store.sampleAt(0, s) === 0 &&
+        Array.from({ length: 19 }, (_, c) => c + 1)
+          .every((c) => second.store.sampleAt(c, s) === 1));
+    check(
+      'parked reads are carried into the next capture instead of eating its ACK',
+      first.ended && aligned && (device.parserStats?.acks ?? 0) === 1,
+      `first=${first.ended}/${first.store.length} second=${second.ended}/${second.store.length} ` +
+        `aligned=${aligned} acks=${device.parserStats?.acks}`,
     );
   }
 
