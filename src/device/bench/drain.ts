@@ -37,6 +37,7 @@ interface CycleResult {
   };
   firstBlockMs: number | null;
   runMs: number;
+  longTasks: { count: number; maxMs: number; inCaptureMs: number };
   storeLength: number;
   effMSa: number;
   lineMBs: number;
@@ -115,6 +116,8 @@ function row(result: CycleResult): HTMLTableRowElement {
     `${result.storeLength}/${result.target}`,
     result.effMSa.toFixed(2),
     result.lineMBs.toFixed(1),
+    String(result.longTasks.count),
+    result.longTasks.maxMs.toFixed(1),
     String(result.parser?.acks ?? '—'),
     String(result.parser?.crcFail ?? '—'),
     String(result.parser?.maskMismatch ?? '—'),
@@ -151,7 +154,9 @@ async function runCycle(cycle: number): Promise<CycleResult> {
     cycle, rate, channels, seconds, target, batchMs, depth, readKiB, drainIdleMs,
     configMs: 0,
     drain: { enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0 },
-    firstBlockMs: null, runMs: 0, storeLength: 0, effMSa: 0, lineMBs: 0,
+    firstBlockMs: null, runMs: 0,
+    longTasks: { count: 0, maxMs: 0, inCaptureMs: 0 },
+    storeLength: 0, effMSa: 0, lineMBs: 0,
     transfers: 0, shortReads: 0, peakInFlight: 0, stopMs: 0, parser: null,
     ended: false, error: null,
   };
@@ -191,6 +196,19 @@ async function runCycle(cycle: number): Promise<CycleResult> {
   let failure: string | null = null;
   device.onError = (e) => { failure = errorText(e); };
 
+  // Long tasks on the page thread are the one candidate that can starve the read
+  // pump: a 50 ms GC pause is longer than the whole in-flight window.
+  const longTasks: Array<{ at: number; ms: number }> = [];
+  let longTaskObserver: PerformanceObserver | null = null;
+  try {
+    longTaskObserver = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) longTasks.push({ at: entry.startTime, ms: entry.duration });
+    });
+    longTaskObserver.observe({ entryTypes: ['longtask'] });
+  } catch {
+    longTaskObserver = null;
+  }
+
   const startedAt = performance.now();
   try {
     await device.startChannelMajor(
@@ -219,6 +237,14 @@ async function runCycle(cycle: number): Promise<CycleResult> {
     // 160 MSa/s capture that starts 14 ms late still transfers at 160 MSa/s.
     const dataMs = Math.max(1, base.runMs - (base.firstBlockMs ?? 0));
     base.effMSa = store.length / 1e6 / (dataMs / 1000);
+    const windowStart = armedAt;
+    const windowEnd = runEnd;
+    const inside = longTasks.filter((t) => t.at + t.ms >= windowStart && t.at <= windowEnd);
+    base.longTasks = {
+      count: inside.length,
+      maxMs: Number(Math.max(0, ...inside.map((t) => t.ms)).toFixed(1)),
+      inCaptureMs: Number(inside.reduce((sum, t) => sum + t.ms, 0).toFixed(1)),
+    };
   } catch (e) {
     failure = errorText(e);
   }
@@ -229,6 +255,7 @@ async function runCycle(cycle: number): Promise<CycleResult> {
   } catch (e) {
     failure ??= errorText(e);
   }
+  longTaskObserver?.disconnect();
   base.stopMs = performance.now() - stopStart;
   // The parser counters are final only after stop() joined the read loop.
   const dataSec = Math.max(0.001,
@@ -286,7 +313,9 @@ runButton.addEventListener('click', async () => {
         batchMs: Number(batchInput.value), depth: 0, readKiB: 0,
         drainIdleMs: Number(drainInput.value), configMs: 0,
         drain: { enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0 },
-        firstBlockMs: null, runMs: 0, storeLength: 0, effMSa: 0, lineMBs: 0,
+        firstBlockMs: null, runMs: 0,
+    longTasks: { count: 0, maxMs: 0, inCaptureMs: 0 },
+    storeLength: 0, effMSa: 0, lineMBs: 0,
         transfers: 0, shortReads: 0, peakInFlight: 0, stopMs: 0, parser: null,
         ended: false, error: errorText(e),
       };
