@@ -325,6 +325,8 @@ export const fr: Messages = {
     'fréquence d’échantillonnage {samplerate} Hz non prise en charge ; l’appareil propose {offered}',
   'diagnostic.device.rateCeiling':
     '{rate} MHz dépasse le plafond de {ceiling} MHz pour {channels} canaux',
+  'diagnostic.device.channelBandwidth':
+    '{channels} canaux à {rateMbps} MHz demandent {bandwidthMbps} Mbit/s, au-delà de la limite FIFO interne de {limitMbps} Mbit/s',
   'diagnostic.device.threshold': 'le seuil doit être un nombre, reçu {threshold}',
   'diagnostic.device.thresholdClips': 'le seuil {volts} V écrête le DAC (code {code})',
   'diagnostic.device.testMode': 'le mode de test doit être 0, 1 ou 2, reçu {mode}',
@@ -490,6 +492,11 @@ export const fr: Messages = {
   'capturePanel.channelWidthBusy': 'La largeur des canaux est verrouillée pendant l’arrêt de la capture',
   'capturePanel.channelWidthTip': 'Capturer {channels} voies, jusqu’à {rate}. Moins de voies permettent une fréquence plus élevée.',
   'capturePanel.chipToggle': '{id} : cliquer pour afficher/masquer (sans effet sur l’acquisition)',
+  'capturePanel.chipSelect': '{id} : cliquer pour sélectionner/désélectionner pour l’acquisition',
+  'capturePanel.selectAll': 'Tout',
+  'capturePanel.selectNone': 'Aucun',
+  'capturePanel.selectAllHint': 'Sélectionner toutes les voies de {range} pour l’acquisition',
+  'capturePanel.selectNoneHint': 'Désélectionner toutes les voies de {range}',
   'capturePanel.analog': 'Analogique',
   'capturePanel.analogCellLabel': 'Entrée analogique {name}',
   'capturePanel.analogCellRange': '±{range} V',
@@ -531,6 +538,8 @@ export const fr: Messages = {
   'capturePanel.comparatorNote': 'Seuil du comparateur {volts} V.',
   'capturePanel.dacNoteAdvised': 'Seuil réel {volts} V. {channels} CH tient {advised} en continu ; son plafond {rate} peut saturer le lien USB. Moins de voies permettent une fréquence plus élevée. (code DAC {code})',
   'capturePanel.rateAboveAdvised': '{channels} CH @ {rate} peut dépasser la bande passante du lien USB (tient {advised} en continu).',
+  'capturePanel.rateAboveLink': 'Les {channels} canaux sélectionnés à {rate} peuvent dépasser la bande passante du lien USB (limite de planification WebUSB)',
+  'capturePanel.channelsForcedOff': 'Au-delà de la limite FIFO interne ({bandwidth}/{limit} Mbit/s) ; voies désactivées de force : {channels}',
   'capturePanel.rateAnalogForced':
     'L’entrée analogique exige ≥{min} : {channels} CH @ {rate} peut dépasser la bande passante du lien USB (tient {advised} en continu). Moins de voies allègent la charge du lien.',
   'capturePanel.capture': 'Capture',

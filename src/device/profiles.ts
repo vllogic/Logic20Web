@@ -374,11 +374,11 @@ export const SLOGIC32U3_PROFILE: DeviceProfile = {
  * VLLogic Logic20 (UHSIF v2.2). Its payload is channel-major, so the UI selects the
  * planar store and the transport delivers one channel at a time.
  *
- * The link is SuperSpeed (5 Gbit/s); the driver admits 400 MB/s of sustained payload,
- * but the 20-lane ceiling is 120 MHz (300 MB/s) because the FPGA samples need
- * 2.4 Gbit/s of lane bandwidth. 16 lanes reach 150 MHz and 4 lanes 600 MHz by the same
- * arithmetic. 80 MHz is the recommended 20-lane default: 200 MB/s leaves the consumer
- * headroom. The worker now owns the read pump, so the page thread only writes batches.
+ * The link is SuperSpeed (5 Gbit/s). The Logic20 accepts any subset of its 20
+ * lanes: the runtime limit is the total lane bit rate (4500 Mbit/s hard for the
+ * internal FIFO, 2560 Mbit/s advisory for USB/host), not a "first N lanes" table.
+ * The per-width ceilings below are the coarse hard-limit tiers (4500 Mbit/s);
+ * actual selection and advice come from `vllogicBandwidth.ts`.
  */
 const VLLOGIC_LINK_RATES = ['ss5'] as const;
 
@@ -407,7 +407,7 @@ export const VLLOGIC_PROFILE: DeviceProfile = {
       { channels: 4, hz: { ss5: 600_000_000 }, recommendedHz: { ss5: 600_000_000 } },
       { channels: 8, hz: { ss5: 300_000_000 }, recommendedHz: { ss5: 300_000_000 } },
       { channels: 16, hz: { ss5: 150_000_000 }, recommendedHz: { ss5: 150_000_000 } },
-      { channels: 20, hz: { ss5: 120_000_000 }, recommendedHz: { ss5: 80_000_000 } },
+      { channels: 20, hz: { ss5: 150_000_000 }, recommendedHz: { ss5: 80_000_000 } },
     ],
     sampleratesHz: VLLOGIC_RATES.map((entry) => entry.rate),
     thresholdVolts: VLLOGIC_THRESHOLD_PRESETS,

@@ -40,13 +40,17 @@ import {
   vllogicBuildCommand,
   vllogicBuildLut,
   vllogicMapBuild,
-  vllogicMaxChannels,
   vllogicRateFor,
   vllogicThresholdToPwm,
   VllogicDecimator,
   type VllogicChannelMap,
   type VllogicParserStats,
 } from './vllogicProtocol.js';
+import {
+  VLLOGIC_FIFO_HARD_MBPS,
+  exceedsHardLimit,
+  selectionBandwidthMbps,
+} from './vllogicBandwidth.js';
 
 /**
  * Read geometry. libsigrok's vllogic driver keeps 16 x 256 KiB IN URBs in flight
@@ -176,12 +180,14 @@ export class VllogicDevice implements Device {
   readonly serial: string;
   readonly maxChannels = VLLOGIC_NUM_CHANNELS;
   readonly sampleratesHz = VLLOGIC_RATES.map((entry) => entry.rate);
+  // Any lane can run at any offered rate; the 4500 Mbit/s FIFO limit, not a
+  // per-width ceiling, decides how many lanes fit (channelBandwidth.ts).
   readonly maxSamplerateHz: Readonly<Record<number, number>> = {
     2: 1_200_000_000,
-    4: 600_000_000,
-    8: 300_000_000,
-    16: 150_000_000,
-    20: 120_000_000,
+    4: 1_200_000_000,
+    8: 1_200_000_000,
+    16: 1_200_000_000,
+    20: 1_200_000_000,
   };
   readonly recommendedSamplerateHz: Readonly<Record<number, number>> = {
     2: 1_200_000_000,
@@ -352,16 +358,32 @@ export class VllogicDevice implements Device {
     if (rate === null) {
       throw new DiagnosticError('device.unsupportedSamplerate', { rate: cfg.samplerate });
     }
-    const widthLimit = vllogicMaxChannels(cfg.samplerate);
-    if (cfg.channels > widthLimit) {
-      throw new DiagnosticError('device.unsupportedChannels', { channels: cfg.channels });
+    const selected = cfg.selectedChannels !== undefined
+      ? [...cfg.selectedChannels]
+      : Array.from({ length: cfg.channels }, (_, channel) => channel);
+    if (selected.length === 0 || selected.length > VLLOGIC_NUM_CHANNELS) {
+      throw new DiagnosticError('device.unsupportedChannels', {
+        channels: selected.length, offered: `1..${VLLOGIC_NUM_CHANNELS}`,
+      });
     }
-    const logical: number[] = [];
-    for (let channel = 0; channel < cfg.channels; channel++) logical.push(channel);
-    if (logical.length > VLLOGIC_NUM_CHANNELS) {
-      throw new DiagnosticError('device.unsupportedChannels', { channels: cfg.channels });
+    if (new Set(selected).size !== selected.length ||
+        selected.some((channel) => !Number.isInteger(channel) ||
+          channel < 0 || channel >= VLLOGIC_NUM_CHANNELS)) {
+      throw new DiagnosticError('device.unsupportedChannels', {
+        channels: selected.length, offered: `logical lanes 0..${VLLOGIC_NUM_CHANNELS - 1}`,
+      });
     }
-    const map = vllogicMapBuild(logical);
+    if (exceedsHardLimit(selected.length, cfg.samplerate)) {
+      throw new DiagnosticError('device.channelBandwidth', {
+        channels: selected.length,
+        rateMbps: Math.round(cfg.samplerate / 1e6),
+        bandwidthMbps: Math.round(selectionBandwidthMbps(selected.length, cfg.samplerate)),
+        limitMbps: VLLOGIC_FIFO_HARD_MBPS,
+      });
+    }
+    // vllogicMapBuild rejects duplicates and lanes outside 0..19; it sorts by physical
+    // lane, which is the payload order.
+    const map = vllogicMapBuild(selected);
     const pwm = vllogicThresholdToPwm(cfg.thresholdVolts);
     if (!pwm) {
       throw new DiagnosticError('device.threshold', { volts: cfg.thresholdVolts });

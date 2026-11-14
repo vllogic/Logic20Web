@@ -72,6 +72,7 @@ export const DIAGNOSTIC_CODES = [
   'device.unknownWidth',
   'device.unsupportedSamplerate',
   'device.rateCeiling',
+  'device.channelBandwidth',
   'device.threshold',
   'device.thresholdClips',
   'device.testMode',

@@ -321,6 +321,8 @@ export const ru: Messages = {
     'неподдерживаемая частота дискретизации {samplerate} Гц; устройство предлагает {offered}',
   'diagnostic.device.rateCeiling':
     '{rate} МГц превышает потолок {ceiling} МГц для {channels} каналов',
+  'diagnostic.device.channelBandwidth':
+    '{channels} каналов на {rateMbps} МГц требуют {bandwidthMbps} Мбит/с — выше жёсткого предела FIFO {limitMbps} Мбит/с',
   'diagnostic.device.threshold': 'порог должен быть числом, получено {threshold}',
   'diagnostic.device.thresholdClips': 'порог {volts} В ограничивает ЦАП (код {code})',
   'diagnostic.device.testMode': 'режим теста должен быть 0, 1 или 2, получено {mode}',
@@ -481,6 +483,11 @@ export const ru: Messages = {
   'capturePanel.channelWidthBusy': 'Ширину каналов нельзя изменить во время остановки захвата',
   'capturePanel.channelWidthTip': 'Захват {channels} каналов, до {rate}. Чем меньше каналов, тем выше доступная частота.',
   'capturePanel.chipToggle': '{id}: щёлкните, чтобы показать/скрыть (не влияет на захват)',
+  'capturePanel.chipSelect': '{id}: щёлкните, чтобы выбрать/снять канал для захвата',
+  'capturePanel.selectAll': 'Все',
+  'capturePanel.selectNone': 'Ничего',
+  'capturePanel.selectAllHint': 'Выбрать все каналы {range} для захвата',
+  'capturePanel.selectNoneHint': 'Снять все каналы {range}',
   'capturePanel.analog': 'Аналог',
   'capturePanel.analogCellLabel': 'Аналоговый вход {name}',
   'capturePanel.analogCellRange': '±{range} В',
@@ -522,6 +529,8 @@ export const ru: Messages = {
   'capturePanel.comparatorNote': 'Порог компаратора {volts} В.',
   'capturePanel.dacNoteAdvised': 'Фактический порог {volts} В. {channels} CH устойчиво {advised}; потолок {rate} может перегрузить USB-канал. Чем меньше каналов, тем выше частота. (код DAC {code})',
   'capturePanel.rateAboveAdvised': '{channels} CH @ {rate} может превысить пропускную способность USB-канала (устойчиво {advised}).',
+  'capturePanel.rateAboveLink': 'Выбранные каналы ({channels}) на {rate} могут превысить пропускную способность USB-канала (ограничение планирования WebUSB)',
+  'capturePanel.channelsForcedOff': 'Выше жёсткого предела внутреннего FIFO ({bandwidth}/{limit} Мбит/с); принудительно отключены: {channels}',
   'capturePanel.rateAnalogForced':
     'Аналоговому входу нужно ≥{min}: {channels} CH @ {rate} может превысить пропускную способность USB-канала (устойчиво {advised}). Меньше каналов — меньше нагрузка на канал.',
   'capturePanel.capture': 'Захват',

@@ -52,12 +52,14 @@ export class WorkerVllogicDevice implements Device {
   readonly sampleLayout = 'channel-major' as const;
   readonly maxChannels = VLLOGIC_NUM_CHANNELS;
   readonly sampleratesHz = VLLOGIC_RATES.map((entry) => entry.rate);
+  // Any lane can run at any offered rate; the 4500 Mbit/s FIFO limit, not a
+  // per-width ceiling, decides how many lanes fit (channelBandwidth.ts).
   readonly maxSamplerateHz: Readonly<Record<number, number>> = {
     2: 1_200_000_000,
-    4: 600_000_000,
-    8: 300_000_000,
-    16: 150_000_000,
-    20: 120_000_000,
+    4: 1_200_000_000,
+    8: 1_200_000_000,
+    16: 1_200_000_000,
+    20: 1_200_000_000,
   };
   readonly recommendedSamplerateHz: Readonly<Record<number, number>> = {
     2: 1_200_000_000,

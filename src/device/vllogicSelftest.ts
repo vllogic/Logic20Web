@@ -202,10 +202,10 @@ async function main(): Promise<void> {
       vllogicRateFor(10_000_000)?.decimate === 2 &&
       vllogicRateFor(5_000_000)?.decimate === 4 &&
       vllogicRateFor(2_500_000)?.decimate === 8 &&
-      vllogicMaxChannels(1_200_000_000) === 2 &&
-      vllogicMaxChannels(600_000_000) === 4 &&
-      vllogicMaxChannels(300_000_000) === 8 &&
-      vllogicMaxChannels(150_000_000) === 16 &&
+      vllogicMaxChannels(1_200_000_000) === 3 &&
+      vllogicMaxChannels(600_000_000) === 7 &&
+      vllogicMaxChannels(300_000_000) === 15 &&
+      vllogicMaxChannels(150_000_000) === 20 &&
       vllogicMaxChannels(120_000_000) === 20 &&
       vllogicMaxChannels(80_000_000) === 20,
     'div/rate/ceiling table',
@@ -527,6 +527,90 @@ async function main(): Promise<void> {
       'a decimated tail keeps contiguous samples and lands exactly on the budget',
       ended && store.length === aligned && contiguous,
       `ended=${ended} length=${store.length} aligned=${aligned} contiguous=${contiguous}`,
+    );
+  }
+
+  // A channel-major capture may stream an arbitrary lane subset, not just 0..N-1.
+  {
+    const fake = new FakeUsb();
+    const selected = [0, 1, 19];
+    const selection = vllogicMapBuild(selected);
+    const snapshots = 40;
+    const payload: number[] = [];
+    const perLogical: number[][] = selected.map(() => []);
+    for (let s = 0; s < snapshots; s++) {
+      const words = selected.map((logical) =>
+        ((logical << 24) ^ (s * 0x9E3779B1) ^ logical) >>> 0);
+      selected.forEach((_logical, i) => perLogical[i]!.push(words[i]!));
+      // The wire is channel-major in ascending physical lane order.
+      for (const physical of selection.physList) {
+        payload.push(words[selected.indexOf(selection.phys2log[physical]!)]!);
+      }
+    }
+    fake.chunks.push(block(selection.mask, 120, 1, payload));
+    const device = await VllogicDevice.open(
+      fake as unknown as USBDevice,
+      { depth: 2, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+    );
+    const store = new PlanarSampleStore({ channelCount: 20, samplerate: 20e6 });
+    store.setActiveChannels(selected);
+    let ended = false;
+    await device.startChannelMajor(
+      {
+        channels: 20, selectedChannels: selected,
+        samplerate: 20e6, thresholdVolts: 1.65,
+      },
+      {
+        begin: (channels) => store.beginFrame(channels),
+        channel: (channel, start, words) => store.appendChannel(channel, start, words),
+        commit: (samples) => store.commitSamples(samples),
+      },
+      undefined,
+      { deviceSampleLimit: snapshots * 32, onEnd: () => { ended = true; } },
+    );
+    for (let i = 0; i < 200 && !ended; i++) await new Promise((r) => setTimeout(r, 5));
+    await device.stop();
+    const ordered = selected.every((logical, index) =>
+      perLogical[index]!.every((word, s) =>
+        store.sampleAt(logical, s * 32) === (word & 1) &&
+        store.sampleAt(logical, s * 32 + 31) === ((word >>> 31) & 1)));
+    check(
+      'an arbitrary lane subset is mapped back to its logical D numbers',
+      ended && store.length === snapshots * 32 && store.storedChannelCount === 3 &&
+        ordered && store.sampleAt(2, 0) === 0,
+      `ended=${ended} length=${store.length} stored=${store.storedChannelCount} ` +
+        `ordered=${ordered} mask=${selection.mask.toString(16)}`,
+    );
+  }
+
+  // 4 x 1200 MHz is 4800 Mbit/s: the transport refuses it even if the UI missed it.
+  {
+    const fake = new FakeUsb();
+    const device = await VllogicDevice.open(
+      fake as unknown as USBDevice,
+      { depth: 1, bytes: 8192, firstBlockMs: 1000, drainIdleMs: 0 },
+    );
+    let error: unknown = null;
+    device.onError = (e) => { error = e; };
+    let threw: unknown = null;
+    try {
+      await device.startChannelMajor(
+        {
+          channels: 20, selectedChannels: [0, 1, 2, 3],
+          samplerate: 1_200_000_000, thresholdVolts: 1.65,
+        },
+        { channel: () => {}, commit: () => {} },
+      );
+    } catch (e) {
+      threw = e;
+    }
+    await device.stop();
+    const code = (threw as { code?: string } | null)?.code ?? 'none';
+    check(
+      'a selection above the 4500 Mbit/s FIFO limit is refused',
+      code === 'device.channelBandwidth' && error === null &&
+        fake.commands.every((command) => command.cmd === UhsifCmd.Stop),
+      `code=${code} commands=${fake.commands.map((command) => command.cmd).join(',')}`,
     );
   }
 

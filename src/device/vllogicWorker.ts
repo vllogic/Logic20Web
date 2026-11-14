@@ -134,7 +134,8 @@ async function handle(
       if (!device) throw new Error('start before open');
       const running = device;
       const frame = displayBatchSamples(message.cfg.samplerate, 120);
-      batchBytes = Math.ceil(frame / 32) * message.cfg.channels * 4;
+      const activeChannels = message.cfg.selectedChannels?.length ?? message.cfg.channels;
+      batchBytes = Math.ceil(frame / 32) * activeChannels * 4;
       // A new geometry invalidates the pooled sizes; eight frames is ~66 ms of page
       // slack, after which the worker starts allocating again.
       pool.length = 0;

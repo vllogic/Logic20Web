@@ -328,6 +328,8 @@ export const en = {
     'unsupported samplerate {samplerate} Hz; the device offers {offered}',
   'diagnostic.device.rateCeiling':
     '{rate} MHz exceeds the {channels}-channel ceiling of {ceiling} MHz',
+  'diagnostic.device.channelBandwidth':
+    '{channels} channels at {rateMbps} MHz need {bandwidthMbps} Mbit/s, above the internal FIFO hard limit of {limitMbps} Mbit/s',
   'diagnostic.device.threshold': 'threshold must be a number, got {threshold}',
   'diagnostic.device.thresholdClips':
     'threshold {volts} V clips the DAC (code {code})',
@@ -491,6 +493,11 @@ export const en = {
   'capturePanel.channelWidthBusy': 'Channel width is locked while the capture is stopping',
   'capturePanel.channelWidthTip': 'Capture {channels} channels, up to {rate}. Fewer channels allow a faster rate.',
   'capturePanel.chipToggle': '{id}: click to show/hide (does not affect capture)',
+  'capturePanel.chipSelect': '{id}: click to select/deselect for capture',
+  'capturePanel.selectAll': 'All',
+  'capturePanel.selectNone': 'None',
+  'capturePanel.selectAllHint': 'Select every lane in {range} for capture',
+  'capturePanel.selectNoneHint': 'Clear every lane in {range}',
   'capturePanel.analog': 'Analog',
   'capturePanel.analogCellLabel': '{name} analog input',
   'capturePanel.analogCellRange': '±{range} V',
@@ -532,6 +539,8 @@ export const en = {
   'capturePanel.comparatorNote': 'Comparator threshold {volts} V.',
   'capturePanel.dacNoteAdvised': 'Actual threshold {volts} V. {channels} CH sustains {advised}; its {rate} ceiling may overrun the USB link. Fewer channels allow a faster rate. (DAC code {code})',
   'capturePanel.rateAboveAdvised': '{channels} CH @ {rate} may exceed the USB link bandwidth (sustains {advised}).',
+  'capturePanel.rateAboveLink': 'Selected {channels} channels @ {rate} may exceed the USB link bandwidth (WebUSB scheduling limit)',
+  'capturePanel.channelsForcedOff': 'Above the internal FIFO hard limit ({bandwidth}/{limit} Mbit/s); forced off {channels}',
   'capturePanel.rateAnalogForced':
     'Analog input needs ≥{min}: {channels} CH @ {rate} may exceed the USB link bandwidth (sustains {advised}). Fewer channels lower the link load.',
   'capturePanel.capture': 'Capture',

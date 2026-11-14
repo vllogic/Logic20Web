@@ -11,6 +11,11 @@ import type { DiagnosticCode, DiagnosticVars } from '../diagnostics.js';
 
 export interface CaptureConfig {
   channels: import('../types.js').ChannelCount;
+  /**
+   * Logical channels a channel-major transport should stream. Omitted means the first
+   * `channels` lanes (the SLogic layout); the Logic20 accepts any subset of 0..19.
+   */
+  selectedChannels?: readonly number[];
   samplerate: number; // Hz, from the table in PROTOCOL-SLOGIC16U3.md
   thresholdVolts: number; // mapped to the DAC code by the device layer
   /** 0 normal input, 1 USB throughput pattern, 2 simulated logic pattern. */

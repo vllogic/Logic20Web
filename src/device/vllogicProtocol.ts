@@ -23,6 +23,8 @@
  * (bit 0 = first sample). One complete snapshot is `nchan` words = 32 sample instants.
  */
 
+import { VLLOGIC_FIFO_HARD_MBPS, maxChannelsForBandwidth } from './vllogicBandwidth.js';
+
 /**
  * USB identity. Logic20 units report bcdDevice 0x0802 (some firmware variants
  * 0x0820); the older Sniffer2 is 0x0602 and is not protocol compatible.
@@ -91,8 +93,8 @@ export const VLLOGIC_CHANNEL_PERM: readonly number[] = [
  * second/fourth/eighth sample on the host, which is exactly what the native driver
  * calls the "PC decimation" factor.
  *
- * The channel ceilings in `vllogicMaxChannels()` keep every row at or below 2.4 Gbit/s:
- * 1200x2 = 600x4 = 300x8 = 150x16 = 120x20.
+ * `vllogicMaxChannels()` keeps the selected lanes under the 4500 Mbit/s FIFO hard
+ * limit (1200x3 = 3600, 600x7 = 4200, 300x15 = 4500, 150x20 = 3000).
  */
 export interface VllogicRate {
   readonly rate: number;
@@ -130,14 +132,9 @@ export const VLLOGIC_THRESHOLD_PRESETS: readonly number[] = [
   -2.5, -1.5, 0, 0.6, 0.9, 1.6, 2.5, 5,
 ];
 
-/** Applies the device's per-rate channel ceiling (see vllogic_max_channels()). */
+/** Selected lanes that fit under the 4500 Mbit/s FIFO hard limit at `rate`. */
 export function vllogicMaxChannels(rate: number): number {
-  // 2.4 Gbit/s envelope: 1200x2, 600x4, 300x8, 150x16, 120x20.
-  if (rate >= 1_200_000_000) return 2;
-  if (rate >= 600_000_000) return 4;
-  if (rate >= 300_000_000) return 8;
-  if (rate >= 150_000_000) return 16;
-  return VLLOGIC_NUM_CHANNELS;
+  return Math.min(VLLOGIC_NUM_CHANNELS, maxChannelsForBandwidth(rate, VLLOGIC_FIFO_HARD_MBPS));
 }
 
 /** The exact div entry for a rate, or null when the table does not offer it. */
