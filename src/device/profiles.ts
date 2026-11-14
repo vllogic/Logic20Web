@@ -426,7 +426,7 @@ export const VLLOGIC_PROFILE: DeviceProfile = {
     preTriggerMaxPercent: 0,
     preTriggerMaxBytes: 1,
   },
-  modes: { single: true, repeat: true, loop: false, record: true },
+  modes: { single: true, repeat: true, loop: true, record: true },
   firmware: { min: '0' },
   quirks: [
     {

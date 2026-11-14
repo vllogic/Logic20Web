@@ -149,7 +149,6 @@ export class WorkerVllogicDevice implements Device {
     options?: CaptureStartOptions,
   ): Promise<void> {
     if (this.failure) throw this.failure;
-    if (options?.loop) throw new Error('VLLogic captures do not support loop mode yet');
     this.sink = sink;
     this.onDropout = onDropout ?? null;
     this.onEnd = options?.onEnd ?? null;
@@ -161,6 +160,7 @@ export class WorkerVllogicDevice implements Device {
       kind: 'start',
       cfg,
       deviceSampleLimit: options?.deviceSampleLimit ?? 0,
+      loop: options?.loop === true,
     };
     this.worker.postMessage(message);
     await Promise.race([started, timeout(START_TIMEOUT_MS, 'start')]);

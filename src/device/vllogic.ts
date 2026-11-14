@@ -207,6 +207,8 @@ export class VllogicDevice implements Device {
   private emittedSamples = 0;
   /** Host-side decimation for the slow rates (10/5/2.5 MHz keep every 2/4/8th). */
   private decimator: VllogicDecimator | null = null;
+  /** Loop captures run until stop(), so stop() must not wait for a sample budget. */
+  private loopMode = false;
   private decimateBuffers: Uint32Array[] = [];
   private targetSamples = 0;
   private onCaptureEnd: (() => void) | null = null;
@@ -339,7 +341,9 @@ export class VllogicDevice implements Device {
     options?: CaptureStartOptions,
   ): Promise<void> {
     if (this.running) throw new Error('VLLogic capture already running');
-    if (options?.loop) throw new Error('VLLogic captures do not support loop mode yet');
+    // Loop mode is host-side: the board streams and the store drops from the front when
+    // the retention window is exceeded, so the transport only has to keep running until
+    // stop() (no deviceSampleLimit).
 
     const rate = vllogicRateFor(cfg.samplerate);
     if (rate === null) {
@@ -366,6 +370,7 @@ export class VllogicDevice implements Device {
     this.sink = sink;
     this.emittedSamples = 0;
     this.targetSamples = Math.max(0, options?.deviceSampleLimit ?? 0);
+    this.loopMode = options?.loop === true;
     this.onCaptureEnd = options?.onEnd ?? null;
     this.ended = false;
     this.stopRequested = false;
@@ -703,7 +708,7 @@ export class VllogicDevice implements Device {
       // the board stops sending after STOP, so these reads never complete. Finalise
       // the statistics now instead of paying the settle window for them.
       const complete = this.targetSamples > 0 && this.emittedSamples >= this.targetSamples;
-      if (!complete) {
+      if (!complete && !this.loopMode) {
         // The device has been (or is being) stopped, so outstanding reads complete as
         // short reads. Bound the wait: a wedged board must not keep the loop alive.
         await Promise.race([Promise.allSettled([...inFlight]), delay(STOP_SETTLE_MS)]);
@@ -820,7 +825,12 @@ export class VllogicDevice implements Device {
       // full settle window would be spent on a read that cannot arrive. A manual stop
       // keeps the window, because the tail in flight is still worth collecting.
       const complete = this.targetSamples > 0 && this.emittedSamples >= this.targetSamples;
-      await Promise.race([loop.catch(() => undefined), delay(complete ? 0 : STOP_SETTLE_MS)]);
+      // A loop capture has no budget to wait for: the board stops on STOP and the
+      // outstanding reads never complete, so the settle window is pure latency.
+      await Promise.race([
+        loop.catch(() => undefined),
+        delay(complete || this.loopMode ? 0 : STOP_SETTLE_MS),
+      ]);
     }
     this.sink = null;
     this.map = null;

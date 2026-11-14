@@ -432,6 +432,35 @@ async function main(): Promise<void> {
     );
   }
 
+  // ---- loop capture -------------------------------------------------------
+  {
+    // A loop capture has no sample budget. The fake parks its reads once the queued
+    // block runs out (a real endpoint does the same), so stop() must not wait for them.
+    const fake = new FakeUsb();
+    fake.hangWhenEmpty = true;
+    fake.chunks.push(block(0xFFFFF, 120, 1, Array.from({ length: 120 }, (_, i) => i)));
+    const device = await VllogicDevice.open(fake as unknown as USBDevice);
+    let threw = false;
+    try {
+      await device.startChannelMajor(
+        { channels: 20, samplerate: 20e6, thresholdVolts: 1.6 },
+        { begin: () => {}, channel: () => {}, commit: () => {} },
+        undefined,
+        { loop: true },
+      );
+    } catch {
+      threw = true;
+    }
+    const t0 = performance.now();
+    await device.stop();
+    const stopMs = performance.now() - t0;
+    check(
+      'a loop capture is accepted and stop() does not wait for a budget',
+      !threw && stopMs < 100,
+      `threw=${threw} stopMs=${stopMs.toFixed(0)}`,
+    );
+  }
+
   // ---- pipelined reads ---------------------------------------------------
   {
     const overridden = vllogicReadTuning(

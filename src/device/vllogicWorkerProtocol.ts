@@ -27,7 +27,7 @@ export interface VllogicDeviceFilter {
 
 export type VllogicToWorker =
   | { kind: 'open'; filter: VllogicDeviceFilter; tuning: VllogicReadTuning }
-  | { kind: 'start'; cfg: CaptureConfig; deviceSampleLimit: number }
+  | { kind: 'start'; cfg: CaptureConfig; deviceSampleLimit: number; loop: boolean }
   | { kind: 'stop' }
   | { kind: 'terminate' }
   /** The page finished with batch `id`'s buffer; it is transferred back for reuse. */

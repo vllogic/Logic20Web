@@ -18,6 +18,12 @@
  */
 
 export interface ChannelMajorTarget {
+  /**
+   * The store's current length, when the target is a store. A loop capture drops from
+   * the front, so the published sample is then shorter than `committedSamples`; the
+   * target's own length is the only authoritative frame origin.
+   */
+  readonly length?: number;
   beginFrame?(channels: readonly number[]): void;
   appendChannel?(channel: number, startSample: number, words: Uint32Array): void;
   commitSamples?(samples: number): void;
@@ -41,6 +47,8 @@ export class ChannelMajorCoalescer implements ChannelMajorSink {
   private used: number[] = [];
   private start = 0;
   private pending = 0;
+  /** The absolute start of the frame being collected; all channels must agree. */
+  private frameStart: number | null = null;
   /** Total samples published so far, for the caller's progress and byte accounting. */
   committedSamples = 0;
 
@@ -48,12 +56,21 @@ export class ChannelMajorCoalescer implements ChannelMajorSink {
     private readonly target: ChannelMajorTarget,
     private readonly batchSamples: number,
     private readonly onCommit?: (samples: number) => void,
+    /**
+     * True for a loop capture: the target drops from the front, so the device's
+     * absolute frame origin no longer equals `start + pending`. Only per-frame
+     * consistency is checked then.
+     */
+    private readonly loop = false,
   ) {}
 
   begin(channels: readonly number[]): void {
+    // Every frame has its own absolute origin, even when the previous one is still
+    // being collected into the same display batch.
+    this.frameStart = null;
     if (this.pending > 0) return;
     this.channels = channels;
-    this.start = this.committedSamples;
+    this.start = this.target.length ?? this.committedSamples;
     const capacity = Math.max(1, Math.ceil(this.batchSamples / 32));
     if (this.words.length !== channels.length || this.words[0]!.length < capacity) {
       this.words = channels.map(() => new Uint32Array(capacity));
@@ -63,7 +80,16 @@ export class ChannelMajorCoalescer implements ChannelMajorSink {
   }
 
   channel(channel: number, startSample: number, words: Uint32Array): void {
-    if (startSample !== this.start + this.pending) {
+    if (this.loop) {
+      // The target drops from the front, so the absolute origin no longer equals
+      // `start + pending`; the channels of one frame must still agree on it.
+      if (this.frameStart === null) this.frameStart = startSample;
+      else if (startSample !== this.frameStart) {
+        throw new Error(
+          `channel ${channel} starts at ${startSample}, but this frame starts at ${this.frameStart}`,
+        );
+      }
+    } else if (startSample !== this.start + this.pending) {
       throw new Error(
         `channel ${channel} starts at ${startSample}, expected ${this.start + this.pending}`,
       );

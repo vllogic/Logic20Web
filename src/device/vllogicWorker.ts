@@ -146,7 +146,8 @@ async function handle(
         sink,
         (position, missing) => post({ kind: 'dropout', position, missing }),
         {
-          ...(message.deviceSampleLimit > 0
+          ...(message.loop ? { loop: true } : {}),
+          ...(!message.loop && message.deviceSampleLimit > 0
             ? { deviceSampleLimit: message.deviceSampleLimit }
             : {}),
           onEnd: () => {

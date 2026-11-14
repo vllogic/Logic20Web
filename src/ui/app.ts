@@ -5050,7 +5050,7 @@ export class App {
       rateChange: this.rateChange,
       savePercent: this.savePercent,
       analogGroups: this.analogGroups(),
-      loopSupported: this.device?.sampleLayout !== 'channel-major',
+      loopSupported: true,
       triggerSupported: this.device?.sampleLayout !== 'channel-major',
       deviceName: this.device?.name ?? null,
       developerTools: this.developerTools,
@@ -6140,9 +6140,9 @@ export class App {
           throw new DiagnosticError('device.thresholdClips', { volts: cfg.thresholdVolts, code });
         }
       }
-      // VLLogic has no loop transport yet; the profile also marks it unavailable.
-      const mode = device.sampleLayout === 'channel-major' && this.settings.mode === 'loop'
-        ? 'single' : this.settings.mode;
+      // Loop is host-side for every transport: the device streams and the store keeps
+      // the newest window.
+      const mode = this.settings.mode;
       const isLoop = mode === 'loop';
       // A Repeat session owns one Capture→Stop period: the first (manual) start renders
       // the panel once, and the interval waves that follow keep the same layout, panel and
@@ -6698,7 +6698,9 @@ export class App {
         // A planar store grows in 2 MiB blocks per channel; at 320 MB/s that is a fresh
         // allocation every few milliseconds, and the resulting GC pause is longer than
         // the USB queue covers. Reserve the whole capture before START instead.
-        if (!isLoop && this.captureLimitSamples > 0) {
+        if (isLoop && this.loopRetentionLen > 0) {
+          store.reserveSamples?.(this.loopRetentionLen + 65_536);
+        } else if (!isLoop && this.captureLimitSamples > 0) {
           store.reserveSamples?.(this.captureLimitSamples + 32);
         }
         // Channel-major device: write each channel's words straight into its plane and
@@ -6715,7 +6717,19 @@ export class App {
           (samples) => {
             this.captureBytes += samples * bytesPerSampleForChannels(cfg.channels);
             this.livePending = true;
+            // Loop: keep the newest `loopRetentionLen` samples. Drop in large, 512-
+            // aligned blocks; translating cursors on every 8.33 ms commit would cost
+            // more than the drop itself.
+            if (isLoop && this.loopRetentionLen > 0 && store.length > this.loopRetentionLen) {
+              const excess = store.length - this.loopRetentionLen;
+              const quantum = Math.max(
+                65_536, Math.floor(this.loopRetentionLen / 16 / 512) * 512,
+              );
+              const drop = Math.floor(excess / quantum) * quantum;
+              if (drop > 0) this.dropLoopFront(store, drop);
+            }
           },
+          isLoop,
         );
         this.captureCoalescer = coalescer;
         await device.startChannelMajor(cfg, coalescer, dropoutSink, startOptions);
