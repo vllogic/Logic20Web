@@ -50,15 +50,16 @@ import {
  * Read geometry. libsigrok's vllogic driver keeps 16 x 256 KiB IN URBs in flight
  * (libsigrok/src/hardware/vllogic-logic/vllogic.h:34-35). WebUSB has no URB ring, but
  * the rule is the same: the endpoint must always have a read queued, or the device's
- * FIFO backs up and the whole capture stretches. 32 x 256 KiB is the browser
+ * FIFO backs up and the whole capture stretches. 64 x 256 KiB is the browser
  * equivalent for the page-thread consumer; override it for bring-up with
  * `?vllogic-read=<bytes>&vllogic-depth=<n>` and compare `[vllogic]` output.
  *
  * Measured 2026-11-14 at 16 CH / 160 MHz (320 MB/s, 0.2 s, six cycles each): depth 8
  * latched drop in 3 of 6 captures, depth 16 in 2 of 6, depth 32 in 0 of 6. The drop
- * positions were spread through the middle of the capture (24-54% of the budget), so
+ * positions were spread through the middle of the capture (24-72% of the budget), so
  * this is the page thread briefly losing its schedule, not a tail overflow: more
- * reads in flight absorb that pause.
+ * reads in flight absorb that pause. The 0.5 s stress run still dropped with 32, so
+ * 64 is the current default; on Linux that needs usbfs_memory_mb >= 16 (64 x 256 KiB).
  *
  * Each transferIn asks for 256 KiB and, on Chromium/Linux, completes with ~230-256 KiB
  * (278 reads carried ~64 MB at depth 32; only the last read is short). The 16 KiB
@@ -66,9 +67,9 @@ import {
  * reads is a request window of ~8 MiB, about 25 ms at 320 MB/s.
  */
 const DEFAULT_READ_BYTES = 256 * 1024;
-const DEFAULT_READ_DEPTH = 32;
+const DEFAULT_READ_DEPTH = 64;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
-const MAX_READ_DEPTH = 32;
+const MAX_READ_DEPTH = 64;
 const CONFIG_SETTLE_MS = 35;
 const STOP_SETTLE_MS = 750;
 /**

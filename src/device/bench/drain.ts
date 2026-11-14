@@ -28,6 +28,7 @@ interface CycleResult {
   seconds: number;
   target: number;
   batchMs: number;
+  prealloc: boolean;
   depth: number;
   readKiB: number;
   drainIdleMs: number;
@@ -63,6 +64,7 @@ const secondsInput = document.getElementById('seconds') as HTMLInputElement;
 const cyclesInput = document.getElementById('cycles') as HTMLInputElement;
 const drainInput = document.getElementById('drain') as HTMLInputElement;
 const batchInput = document.getElementById('batch') as HTMLInputElement;
+const preallocInput = document.getElementById('prealloc') as HTMLInputElement;
 const depthInput = document.getElementById('depth') as HTMLInputElement;
 const readKiBInput = document.getElementById('readKiB') as HTMLInputElement;
 const gapInput = document.getElementById('gap') as HTMLInputElement;
@@ -76,6 +78,9 @@ const json = document.getElementById('json') as HTMLTextAreaElement;
 
 const results: CycleResult[] = [];
 let usb: USBDevice | null = null;
+/** Reused across cycles with the same geometry: reallocating 160 MB per wave is what
+ *  the GC pauses in the stress run came from. */
+let cachedStore: { key: string; store: PlanarSampleStore } | null = null;
 
 function setStatus(text: string): void {
   statusLine.textContent = text;
@@ -154,7 +159,8 @@ async function runCycle(cycle: number): Promise<CycleResult> {
   const drainIdleMs = Math.max(0, Math.round(Number(drainInput.value)));
   const batchMs = Math.max(0, Number(batchInput.value));
   const base: CycleResult = {
-    cycle, rate, channels, seconds, target, batchMs, depth, readKiB, drainIdleMs,
+    cycle, rate, channels, seconds, target, batchMs,
+    prealloc: preallocInput.checked, depth, readKiB, drainIdleMs,
     configMs: 0,
     drain: { enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0 },
     firstBlockMs: null, runMs: 0,
@@ -168,7 +174,17 @@ async function runCycle(cycle: number): Promise<CycleResult> {
   const device = await VllogicDevice.open(usb, {
     depth, bytes: readKiB * 1024, firstBlockMs: 1000, drainIdleMs,
   });
-  const store = new PlanarSampleStore({ channelCount: channels, samplerate: rate });
+  const storeKey = `${channels}:${rate}`;
+  let store: PlanarSampleStore;
+  if (cachedStore?.key === storeKey) {
+    store = cachedStore.store;
+    store.reset();
+  } else {
+    store = new PlanarSampleStore({ channelCount: channels, samplerate: rate });
+    cachedStore = { key: storeKey, store };
+  }
+  // Reserve before START: mid-capture block growth is what triggers the GC pauses.
+  if (preallocInput.checked) store.reserveSamples(target + 32);
   const batchSamples = batchMs > 0
     ? displayBatchSamples(rate, 1000 / batchMs)
     : 0;
@@ -333,7 +349,8 @@ runButton.addEventListener('click', async () => {
         cycle: i + 1,
         rate: Number(rateInput.value), channels: Number(channelsInput.value),
         seconds: Number(secondsInput.value), target: 0,
-        batchMs: Number(batchInput.value), depth: 0, readKiB: 0,
+        batchMs: Number(batchInput.value), prealloc: preallocInput.checked,
+        depth: 0, readKiB: 0,
         drainIdleMs: Number(drainInput.value), configMs: 0,
         drain: { enabled: false, reads: 0, bytes: 0, preArmed: false, ms: 0 },
         firstBlockMs: null, runMs: 0,
