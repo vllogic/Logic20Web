@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runInNewContext } from 'node:vm';
 import { uploadSite, qiniuEtag } from './upload-qiniu.mjs';
 
 const config = { accessKey: 'test-ak', secretKey: 'test-sk', bucket: 'test-bucket' };
-const files = ['index.html', 'ota/index.html', 'ota/batch.html', 'ota/firmware.json', 'ota/src/app.mjs', 'sw.js', 'manifest.webmanifest', 'pyodide/123456abcdef/pyodide.asm.wasm', 'assets/main-12345678.js', 'icons/icon-maskable-512.png', 'ota-redirect.html'];
+const files = ['index.html', 'sw.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png', 'favicon.svg', 'pyodide/123456abcdef/pyodide.asm.wasm', 'pyodide/123456abcdef/pyodide-lock.json', 'assets/main-12345678.js', 'DEPLOY.txt', 'LICENSE.txt', 'THIRD_PARTY_LICENSES.txt'];
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'slogic-qiniu-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -30,7 +29,7 @@ test('publishes actual bytes with WASM/module MIME; resources finish before HTML
     assert.equal(url, 'https://up-z2.qiniup.com/');
     assert.ok(signal instanceof AbortSignal);
     const key = body.get('key');
-    if (key.endsWith('.html')) assert.equal(completed.filter(k => !k.endsWith('.html') && k !== 'sw.js').length, files.length - 5);
+    if (key.endsWith('.html')) assert.equal(completed.filter(k => !k.endsWith('.html') && k !== 'sw.js').length, files.length - 2);
     if (key === 'sw.js') assert.equal(completed.length, files.length - 1);
     assert.equal(await body.get('file').text(), 'fixture:' + key);
     forms.set(key, body);
@@ -40,8 +39,12 @@ test('publishes actual bytes with WASM/module MIME; resources finish before HTML
   });
   assert.equal(result.files, files.length);
   assert.equal(forms.get(files[7]).get('file').type, 'application/wasm');
-  assert.equal(forms.get('ota/src/app.mjs').get('file').type, 'text/javascript');
-  for (const key of files.slice(0, 7)) assert.equal(forms.get(key).get('x-qn-meta-!Cache-Control'), 'no-cache', key);
+  assert.equal(forms.get('assets/main-12345678.js').get('file').type, 'text/javascript');
+  for (const key of ['index.html', 'sw.js', 'manifest.webmanifest', 'icons/icon-192.png',
+    'icons/icon-512.png', 'icons/icon-maskable-512.png', 'favicon.svg', 'DEPLOY.txt',
+    'LICENSE.txt', 'THIRD_PARTY_LICENSES.txt']) {
+    assert.equal(forms.get(key).get('x-qn-meta-!Cache-Control'), 'no-cache', key);
+  }
   assert.equal(forms.get('assets/main-12345678.js').get('x-qn-meta-!Cache-Control'), null);
   assert.equal(forms.get('icons/icon-maskable-512.png').get('x-qn-meta-!Cache-Control'), 'no-cache');
   for (const key of files.filter(k => k.endsWith('.html'))) assert.equal(forms.get(key).get('x-qn-meta-!Cache-Control'), 'no-cache', key);
@@ -70,8 +73,8 @@ test('incomplete artifact or missing credentials cannot start any upload', async
   let calls = 0;
   const noFetch = async () => { calls++; throw new Error('unexpected fetch'); };
   await assert.rejects(publish(root, { ...config, bucket: '' }, noFetch), /required/);
-  await rm(join(root, 'ota/batch.html'));
-  await assert.rejects(publish(root, config, noFetch), /artifact missing ota\/batch.html/);
+  await rm(join(root, 'sw.js'));
+  await assert.rejects(publish(root, config, noFetch), /artifact missing sw\.js/);
   assert.equal(calls, 0);
 });
 
@@ -84,17 +87,6 @@ test('reupload reapplies mutable metadata and refuses a foreign credential recip
   await assert.rejects(publish(root, { ...config, uploadHost: 'https://example.com' }, fetcher), /upload host/);
 });
 
-
-test('bare OTA directory redirect preserves query/hash and always stays on this site', async () => {
-  const html = await readFile(new URL('./ota-redirect.html', import.meta.url), 'utf8');
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-  for (const [search, hash] of [['', ''], ['?a=1.2&return=https://example.com', '#demo'], ['?demo=1', '#a%20b']]) {
-    let destination;
-    runInNewContext(script, { location: { search, hash, replace: value => { destination = value; } } });
-    assert.equal(destination, '/ota/' + search + hash);
-  }
-  assert.match(html, /href="\/ota\/"/);
-});
 
 test('unchanged large WASM is verified and skipped instead of timing out on reupload', async t => {
   const root = await fixture(t), wasm = files[7];
@@ -131,7 +123,11 @@ function statKey(url) {
   return entry.slice('test-bucket:'.length);
 }
 function metadata(key) {
-  return { type: 0, hash: qiniuEtag(Buffer.from('fixture:' + key)), fsize: Buffer.byteLength('fixture:' + key), mimeType: key.endsWith('.wasm') ? 'application/wasm' : 'text/javascript', 'x-qn-meta': null };
+  const mimeType = key.endsWith('.wasm') ? 'application/wasm'
+    : key.endsWith('.json') ? 'application/json'
+      : key.endsWith('.js') ? 'text/javascript'
+        : 'application/octet-stream';
+  return { type: 0, hash: qiniuEtag(Buffer.from('fixture:' + key)), fsize: Buffer.byteLength('fixture:' + key), mimeType, 'x-qn-meta': null };
 }
 
 test('matching immutable objects skip, but mutable entry points always reapply metadata', async t => {
@@ -147,8 +143,8 @@ test('matching immutable objects skip, but mutable entry points always reapply m
     const key = init.body.get('key'); posted.set(key, init.body);
     return ack(key);
   }, async () => {});
-  assert.deepEqual(new Set(lookedUp), new Set([files[7], 'assets/main-12345678.js']));
-  assert.equal(result.skipped, 2);
+  assert.deepEqual(new Set(lookedUp), new Set([files[7], files[8], 'assets/main-12345678.js']));
+  assert.equal(result.skipped, 3);
   assert.equal(result.uploaded + result.skipped, files.length);
   for (const key of files.filter(k => !lookedUp.includes(k))) {
     assert.equal(posted.get(key).get('x-qn-meta-!Cache-Control'), 'no-cache', key);
@@ -196,7 +192,7 @@ test('transient stat failure backs off; an unreadable response never becomes a s
   }, async ms => { delays.push(ms); });
   assert.equal(wasmStats, 2);
   assert.deepEqual(delays, [1000]);
-  assert.equal(result.skipped, 2);
+  assert.equal(result.skipped, 3);
   await assert.rejects(uploadSite(root, config, async (_, { method, body }) => method === 'GET'
     ? { ok: true, status: 200, json: async () => ({ hash: 'missing fields' }) } : ack(body.get('key')), async () => {}), /invalid object metadata/);
 });

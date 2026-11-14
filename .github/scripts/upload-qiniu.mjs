@@ -59,7 +59,7 @@ export async function uploadSite(dist, config, fetcher = fetch, pause = delay) {
   }
   const files = await walk(dist);
   const keys = new Set(files.map(f => f.key));
-  for (const key of ['index.html', 'ota-redirect.html', 'ota/index.html', 'ota/batch.html', 'ota/firmware.json', 'sw.js', 'manifest.webmanifest']) {
+  for (const key of ['index.html', 'sw.js', 'manifest.webmanifest']) {
     if (!keys.has(key)) throw new Error('artifact missing ' + key);
   }
   if (!files.some(f => f.key.endsWith('.wasm'))) throw new Error('artifact missing Pyodide WASM');
@@ -106,9 +106,9 @@ export async function uploadSite(dist, config, fetcher = fetch, pause = delay) {
   async function upload(file) {
     const data = await readFile(file.path);
     const mime = MIME[extname(file.key).toLowerCase()] || 'application/octet-stream';
-    // Query-stamped OTA modules and all unversioned entry points must revalidate.
-    // Only content-addressed files are allowed a persistent browser cache.
-    const immutable = !file.key.endsWith('.html') && !file.key.startsWith('ota/') && !file.key.startsWith('icons/') && (
+    // Unversioned entry points must revalidate; only content-addressed files are
+    // allowed a persistent browser cache.
+    const immutable = !file.key.endsWith('.html') && !file.key.startsWith('icons/') && (
       /-[A-Za-z0-9_-]{8,}\.[a-z0-9.]+$/.test(file.key) || /^pyodide\/[a-f0-9]{8,}\//.test(file.key)
     );
     if (immutable) {
