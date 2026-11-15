@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-14，对应 `main` 的 `ab0b259`（Worker、host-loop、新速率表/抽稀、1.6 V 阈值、预算对齐、CRC 重同步、任意 lane 选择）。
+最后更新：2026-11-15，对应 `main` 的 `c9613e0`（离线单文件 Release、GitHub Pages 子路径 worker URL、OTA/Kodo 清理）。
 
 ---
 
@@ -13,7 +13,7 @@
 - 保留对 Sipeed SLogic16/32 U3 的支持（interleaved，走 Worker 传输）。
 - 采集、存储、波形绘制、协议解码全部在本地浏览器里完成，无账号、无云端。
 - 支持打开/保存 `.sr`（sigrok/PulseView）与 `.lwcap`；支持 sigrok 解码器（Pyodide）。
-- 是一个 PWA：Service Worker 预缓存 shell，支持离线；升级需要用户点击（不自动 `skipWaiting`）。
+- 是一个 PWA：Service Worker 预缓存 shell，支持离线；升级需要用户点击（不自动 `skipWaiting`）。另有 tag 触发的离线单文件 `.html` / `.zip` Release。
 
 远端仓库：`git@github.com:vllogic/Logic20Web.git`（分支 `main`）。
 上游来源：Sipeed 的 slogicweb / tralamazza 的 logicweb。
@@ -202,6 +202,18 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 - `--stall-ms 1500` 模拟页面卡住（设备 FIFO 溢出、drop latch），用来看 STOP 后是否留下旧数据块。
 - 结论（2026-11-14，固件 `0x0820`）：配置 ACK 不会无限堆积；STOP+FLUSH 后没有旧数据块；START 后首块是 ACK。生产默认仍保留 20 ms 排空，因为高负载下上一轮 STOP 后的尾部会残留在端点。
 
+### 离线单文件 Release（2026-11-15）
+
+```bash
+git tag Logic20Web-20261115 && git push origin Logic20Web-20261115
+```
+
+- `.github/workflows/release-offline.yml`：`npm run dist` → `check:portable`（runner 上失败只告警）→ 打包 `.html` / `.zip` → `gh release`。
+- asset 名：`Logic20Web-<package version>-<短 commit>-<tag 日期>`；zip 含 `LICENSE.txt`、`THIRD_PARTY_LICENSES.txt`、离线 README、`99-logic20.rules`。旧 assets 自动清理，显式 `--draft=false`。
+- **同日重发**：`git tag -f` + `git push --force origin <tag>`；**不要删除 tag**（GitHub 删 tag 会连带删 release，重建时还有竞态）。About 的下载入口是 `releases/latest`（四语言 `about.offline`）。
+- **GitHub Pages 子路径**：项目页在 `/Logic20Web/`，Vite 默认 `new Worker("/assets/...")` 会 404。`vite.config.ts` 的 `inlineEntryForFileOpen` 已改成文档相对 `./assets/...`；Pyodide/decoders 用 `document.baseURI`，SW/manifest 本来就是相对。不要改回根绝对路径。
+- **Kodo/OTA**：`3eb68de` 删除 OTA 后，`upload-qiniu.mjs` 必需文件、测试 fixture、`purge-qiniu-cdn.sh` 的 `ota/*` 已同步移除；别再要求 `ota/*`。Pages 未启用时 `deploy` 自动跳过，Qiniu 上传/刷新改为 `needs: build`。
+
 ---
 
 ## 6. 升级 / PWA 机制
@@ -284,6 +296,18 @@ python3 src/device/tools/vllogic_drain_probe.py --mode web --cycles 3 \
 ---
 
 ## 9. 近期提交（截至交接）
+
+离线单文件 / CI（2026-11-15）：
+
+```
+c9613e0  fix(build): load workers relative to the document for sub-path hosting
+0040046  ci: publish the offline release explicitly and report its state
+df21297  ci: name the offline assets with version, commit and date
+3a87660  fix(ci): drop the removed OTA files from the Qiniu publisher
+a763327  ci: keep Pages and the offline release green on runner limits
+3199e9a  ci: skip the mainland mirror when Qiniu secrets are absent
+eef8149  feat(ui): link the offline single-file release from About
+```
 
 ```
 ab0b259  feat(ui): size the capture ceiling by the selected lanes
