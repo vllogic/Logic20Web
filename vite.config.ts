@@ -293,6 +293,15 @@ function inlineEntryForFileOpen(): Plugin {
             /new URL\("([^"./][^"]*?\.js)",(\s*)import\.meta\.url\)/g,
             'new URL("assets/$1",$2import.meta.url)',
           );
+          // Vite emits worker URLs as root-absolute (`new Worker("/assets/worker-*.js")`).
+          // That is correct at a domain root but 404s when the same artifact is served
+          // from a GitHub Pages project path such as /Logic20Web/, where the browser asks
+          // for /assets/worker-*.js instead of /Logic20Web/assets/worker-*.js. The entry
+          // is inlined, so a document-relative URL is correct at both roots.
+          code = code.replace(
+            /new Worker\("\/assets\/([^"]+\.js)"/g,
+            'new Worker("./assets/$1"',
+          );
           // The entry chunk is emitted under dist/assets, so rollup writes sibling
           // chunks at the dist root as "../<name>.js". Once this code is inlined into
           // dist/index.html, the same chunk is "./<name>.js" - and that stays correct
