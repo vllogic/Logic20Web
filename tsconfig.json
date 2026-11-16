@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["w3c-web-usb", "vite/client"]
   },
-  "include": ["src", "bench", "uictrl"]
+  "include": ["src", "bench", "uictrl", "ota/src"]
 }

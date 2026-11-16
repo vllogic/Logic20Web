@@ -1,7 +1,7 @@
 # Logic20Web 维护交接（handoff）
 
 本文给接手维护者：项目要点、已完成的 Logic20 支持、关键坑、测试方式和 TODO。
-最后更新：2026-11-15，对应 `main` 的 `c9613e0`（离线单文件 Release、GitHub Pages 子路径 worker URL、OTA/Kodo 清理）。
+最后更新：2026-11-16，基于 `main` 的 `c9613e0`，新增独立 `/ota/` 固件升级页。
 
 ---
 
@@ -30,6 +30,9 @@ src/device/vllogicWorkerProtocol.ts Worker 消息协议 + buffer 池回传
 src/device/vllogicProtocol.ts    UHSIF v2.2：CRC、LUT、通道映射、parser、div/阈值
 src/device/profiles.ts           Logic20 / SLogic profile、速率上限
 src/device/vllogicSelftest.ts    Logic20 离线自检（24 项）
+src/device/iap/                  Logic20 IAP：0xE0/0xE1/0xE2、AES-128-CBC、包预检、更新编排
+src/device/iapSelftest.ts        IAP 离线自检（27 项，含真实 release .iap）
+ota/                             独立 /ota/ 升级页（内置 release .iap，也支持本地 .iap）
 src/device/bench/                真实硬件评估页（不参与生产构建；index.html / drain.html）
 src/data/planarStore.ts          channel-major 位平面存储 + min/max pyramid
 src/data/bitplane.ts             BitPlane（writeWords 快路径）
@@ -129,7 +132,7 @@ docs/PROTOCOL-VLLOGIC-LOGIC20.md 协议说明（注意单位：payload_len 是 d
 | 触发/Loop | 支持无触发 Loop（host 端保留最新窗口并 `dropFront`）；软件触发仍不支持 |
 | 阈值预设 | -2.5 / -1.5 / 0 / 0.6（1.2 V CMOS）/ 0.9（1.8 V）/ 1.6（3.3 V，默认）/ 2.5（5.0 V CMOS）/ 5 V + 自定义 |
 | 测试模式 | Logic20 只有正常模式；采集面板对该设备隐藏测试模式行 |
-| OTA | 固件更新链接 `https://logic20.vllogic.com/ota/`（页面暂未发布，入口保留） |
+| OTA | 固件更新页 `https://logic20.vllogic.com/ota/`（内置 release .iap，也支持本地 .iap；独立静态构建） |
 
 关键坑：
 
@@ -212,7 +215,7 @@ git tag Logic20Web-20261115 && git push origin Logic20Web-20261115
 - asset 名：`Logic20Web-<package version>-<短 commit>-<tag 日期>`；zip 含 `LICENSE.txt`、`THIRD_PARTY_LICENSES.txt`、离线 README、`99-logic20.rules`。旧 assets 自动清理，显式 `--draft=false`。
 - **同日重发**：`git tag -f` + `git push --force origin <tag>`；**不要删除 tag**（GitHub 删 tag 会连带删 release，重建时还有竞态）。About 的下载入口是 `releases/latest`（四语言 `about.offline`）。
 - **GitHub Pages 子路径**：项目页在 `/Logic20Web/`，Vite 默认 `new Worker("/assets/...")` 会 404。`vite.config.ts` 的 `inlineEntryForFileOpen` 已改成文档相对 `./assets/...`；Pyodide/decoders 用 `document.baseURI`，SW/manifest 本来就是相对。不要改回根绝对路径。
-- **Kodo/OTA**：`3eb68de` 删除 OTA 后，`upload-qiniu.mjs` 必需文件、测试 fixture、`purge-qiniu-cdn.sh` 的 `ota/*` 已同步移除；别再要求 `ota/*`。Pages 未启用时 `deploy` 自动跳过，Qiniu 上传/刷新改为 `needs: build`。
+- **Kodo/OTA**：OTA 页面现在由 `npm run build` 的 `postbuild` 生成到 `dist/ota/`；`upload-qiniu.mjs` 遍历整个 `dist`，不需要 submodule，也没有 `ota/*` 白名单。Pages 未启用时 `deploy` 自动跳过，Qiniu 上传/刷新改为 `needs: build`。
 
 ---
 

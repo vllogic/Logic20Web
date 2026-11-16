@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "product": "Logic20",
+  "magic": "0x20260820",
+  "hwMask": 1,
+  "latest": {
+    "version": "0x2611",
+    "date": "2026-11-16",
+    "codeHash": "a855b02C",
+    "dataHash": "47357b4C",
+    "file": "logic20.20261116.a855b02.47357b4.iap",
+    "size": 327936,
+    "blocks": 1281,
+    "sha256": "f1a00601c41c58f078024faf5c3aae9c71da5fe4382d788f84a415ca7ad38bbc",
+    "codeLength": 35880,
+    "dataLength": 291446,
+    "dataType": 2
+  }
+}

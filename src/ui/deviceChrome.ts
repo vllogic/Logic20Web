@@ -118,9 +118,9 @@ export function deviceMenuItems(view: DeviceMenuView, actions: DeviceMenuActions
 }
 
 /**
- * The firmware updater. The Logic20 fork points at its own OTA page rather than the
- * Sipeed one; the page is not shipped with the app and is not published yet, so the
- * link is only wired up for when firmware updates are added. It asks for its own WebUSB
- * grant, and this tab must release the board first (the menu disconnects before opening).
+ * The firmware updater. It is a standalone page under `/ota/` in this site, built by
+ * `scripts/build-ota.mjs`, and drives the device's in-application IAP over WebUSB.
+ * It asks for its own WebUSB grant, and this tab must release the board first (the
+ * menu disconnects before opening).
  */
 export const FIRMWARE_UPDATE_URL = 'https://logic20.vllogic.com/ota/';

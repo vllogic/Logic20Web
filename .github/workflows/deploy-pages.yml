@@ -11,9 +11,10 @@
 #     the base is `/`. It MUST be an absolute base: the decode worker resolves
 #     Pyodide/decoders from import.meta.env.BASE_URL, and a relative base ('./')
 #     would 404 inside the blob worker (see src/decode/worker.ts).
-#   - The OTA firmware-update pages are not part of this fork; the device menu
-#     links to the public Sipeed updater instead. There is no submodule to
-#     checkout or stage.
+#   - The OTA firmware-update page is part of this fork: `npm run build` ends with
+#     a postbuild step that regenerates ota/public/firmware.json from the bundled
+#     .iap and builds the standalone page into dist/ota/ (base `/ota/`). There is
+#     no submodule to checkout or stage.
 name: Deploy to GitHub Pages
 
 on:

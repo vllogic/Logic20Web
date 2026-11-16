@@ -23,6 +23,8 @@ capture. Everything runs locally; there are no accounts and no cloud.
 - 130+ sigrok decoders (Pyodide), a searchable results list and CSV/TXT export.
 - Open `.sr` and `.lwcap`; save `.lwcap`, `.sr`, `.vcd` and `.csv`.
 - Installable offline app (service worker), plus a single-file portable build.
+- A standalone firmware update page under `/ota/` for the Logic20 IAP: bundled release
+  package or a local `.iap`, with an in-browser pre-flight check before anything is sent.
 - English, 简体中文, Français and Русский.
 
 ## Development
@@ -32,7 +34,9 @@ npm install
 npm run dev          # http://127.0.0.1:5173/
 npm run dev:lan      # HTTPS on the LAN (WebUSB needs a secure context); run `npm run cert` first
 npm test             # type-check and every offline self-test
-npm run build        # production build into dist/
+npm run build        # production build into dist/ (also builds the /ota/ page)
+npm run dev:ota      # the standalone firmware update page on :5175
+npm run build:ota    # only the /ota/ page into dist/ota/
 npm run dist && npm run check:portable   # single-file portable build and its smoke test
 ```
 

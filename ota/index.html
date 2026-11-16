@@ -1,0 +1,173 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 vllogic.com -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Logic20 Firmware Update</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%230d1117' stroke='%23223044' stroke-width='1.2'/%3E%3Cpath d='M6 8L12 23L18 8' fill='none' stroke='%2300d4ff' stroke-width='3.2' stroke-linejoin='round' stroke-linecap='round'/%3E%3Cpath d='M21 8V23H26' fill='none' stroke='%23ffb020' stroke-width='3.2' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="./style.css" />
+  <script>
+    try {
+      const theme = localStorage.getItem('logic20-ota-theme');
+      if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+    } catch {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="15" />
+        <path class="v" d="M6 8L12 23L18 8" />
+        <path class="l" d="M21 8V23H26" />
+      </svg>
+      <div>
+        <h1 data-i18n="title">Logic20 固件升级</h1>
+        <p class="subtitle" data-i18n="subtitle"></p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <a class="button ghost nav-link" href="../" data-i18n="navApp"></a>
+      <button id="lang" class="ghost" type="button"></button>
+      <button id="theme" class="ghost icon" type="button" data-i18n-title="themeTitle">
+        <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v2.5M12 20v2.5M1.5 12H4M20 12h2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div id="banner" class="banner" hidden>
+      <strong id="banner-title"></strong>
+      <span id="banner-body"></span>
+    </div>
+
+    <section class="card" id="card-device">
+      <div class="card-head">
+        <span class="num">1</span>
+        <h2 data-i18n="step1"></h2>
+        <span id="device-pill" class="pill" hidden data-i18n="running"></span>
+      </div>
+      <div id="device-empty" class="empty">
+        <p data-i18n="connectHint"></p>
+        <p class="note" data-i18n="connectNote"></p>
+        <button id="connect" class="primary" type="button" data-i18n="connect"></button>
+      </div>
+      <div id="device-info" hidden>
+        <div class="device-main">
+          <strong id="device-name"></strong>
+          <span id="device-serial" class="mono"></span>
+        </div>
+        <dl class="facts">
+          <div><dt data-i18n="fileVersion"></dt><dd id="device-version"></dd></div>
+          <div><dt data-i18n="fileDate"></dt><dd id="device-date"></dd></div>
+          <div><dt data-i18n="fileSize"></dt><dd id="device-size"></dd></div>
+          <div><dt data-i18n="fileCode"></dt><dd id="device-code"></dd></div>
+          <div><dt data-i18n="codeHash"></dt><dd id="device-code-hash" class="mono"></dd></div>
+          <div><dt data-i18n="dataHash"></dt><dd id="device-data-hash" class="mono"></dd></div>
+        </dl>
+        <p id="device-note" class="note" hidden></p>
+        <div class="row-actions">
+          <button id="read-again" class="ghost small" type="button" data-i18n="readAgain"></button>
+          <button id="change" class="ghost small" type="button" data-i18n="change"></button>
+          <button id="disconnect" class="ghost small" type="button" data-i18n="disconnect"></button>
+        </div>
+      </div>
+      <p id="device-error" class="error-text" hidden></p>
+    </section>
+
+    <section class="card" id="card-file">
+      <div class="card-head">
+        <span class="num">2</span>
+        <h2 data-i18n="step2"></h2>
+      </div>
+      <p class="note" data-i18n="step2Hint"></p>
+      <div class="package-source">
+        <label id="drop" class="drop">
+          <input id="file" type="file" accept=".iap,application/octet-stream" hidden />
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
+          <span data-i18n="dropHint"></span>
+          <span class="button ghost small" data-i18n="chooseFile"></span>
+        </label>
+        <div id="bundled-box" class="bundled" hidden>
+          <span class="label" data-i18n="bundledTitle"></span>
+          <strong id="bundled-label"></strong>
+          <button id="bundled" class="primary small" type="button" data-i18n="useBundled"></button>
+        </div>
+      </div>
+      <div id="file-info" hidden>
+        <div class="file-head">
+          <strong id="file-name"></strong>
+          <span id="file-source" class="pill" hidden></span>
+        </div>
+        <dl class="facts">
+          <div><dt data-i18n="fileVersion"></dt><dd id="file-version"></dd></div>
+          <div><dt data-i18n="fileDate"></dt><dd id="file-date"></dd></div>
+          <div><dt data-i18n="fileSize"></dt><dd id="file-size"></dd></div>
+          <div><dt data-i18n="fileCode"></dt><dd id="file-code"></dd></div>
+          <div><dt data-i18n="codeHash"></dt><dd id="file-code-hash" class="mono"></dd></div>
+          <div><dt data-i18n="dataHash"></dt><dd id="file-data-hash" class="mono"></dd></div>
+          <div class="wide"><dt data-i18n="fileSha"></dt><dd class="hash"><code id="file-sha"></code><button id="copy-sha" class="link" type="button" data-i18n="copy"></button></dd></div>
+        </dl>
+        <p id="package-error" class="error-text" hidden></p>
+        <div id="precheck" class="precheck" aria-live="polite"></div>
+        <p id="version-note" class="note" hidden></p>
+        <label id="ack-row" class="ack" hidden><input id="ack" type="checkbox" /> <span data-i18n="ackDowngrade"></span></label>
+        <button id="file-change" class="ghost small" type="button" data-i18n="chooseFile"></button>
+      </div>
+    </section>
+
+    <section class="card" id="card-update">
+      <div class="card-head">
+        <span class="num">3</span>
+        <h2 data-i18n="step3"></h2>
+      </div>
+      <p id="ready" class="muted"></p>
+      <div id="progress" class="progress" hidden role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="bar"><div id="bar-fill"></div></div>
+      </div>
+      <button id="start" class="primary large" type="button" data-i18n="start" disabled></button>
+      <div id="result" class="result" hidden>
+        <div class="result-icon" aria-hidden="true"></div>
+        <div>
+          <strong id="result-title"></strong>
+          <p id="result-body"></p>
+          <button id="result-btn" class="ghost small" type="button" hidden></button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card secondary">
+      <details class="help">
+        <summary data-i18n="recoveryTitle"></summary>
+        <p data-i18n="recoveryBody"></p>
+        <p data-i18n="recoveryPc2"></p>
+      </details>
+      <details class="help">
+        <summary data-i18n="helpTitle"></summary>
+        <ul>
+          <li data-i18n="helpBrowser"></li>
+          <li data-i18n="helpBusy"></li>
+          <li data-i18n="helpReset"></li>
+        </ul>
+      </details>
+      <details id="log-box" class="log" hidden>
+        <summary>
+          <span data-i18n="logTitle"></span>
+          <button id="copy-log" class="link" type="button" data-i18n="copy"></button>
+        </summary>
+        <pre id="log"></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span data-i18n="footer"></span>
+  </footer>
+
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

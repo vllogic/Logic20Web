@@ -28,6 +28,7 @@ const filter = filterArg >= 0 ? process.argv[filterArg + 1] ?? '' : '';
 const entries = [
   'src/data/bench/runtests.ts',
   'src/device/offline-test.ts',
+  'src/device/iapSelftest.ts',
   'src/device/emulationPatternTest.ts',
   'src/platform/capabilitiesSelftest.ts',
   'src/device/profileSelftest.ts',
